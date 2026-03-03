@@ -1,6 +1,6 @@
 # vw SUNBIRD ** Dev ** ---------------------------------------------------
 
-## vw ------ LOCALHOST
+## vw ------ LOCALHOST 
 php_value memory_limit 512M
 #
 RewriteEngine On
