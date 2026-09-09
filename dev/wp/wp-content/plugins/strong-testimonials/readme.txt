@@ -1,10 +1,10 @@
 === Strong Testimonials ===
-Contributors: wpchill,silkalns,cdillon27
+Contributors: wpchill,silkalns
 Tags: testimonial plugin, testimonials slider, testimonial form, star ratings
 Requires at least: 5.2
 Requires PHP: 5.6
-Tested up to: 6.8
-Stable tag: 3.2.11
+Tested up to: 7.1
+Stable tag: 3.3.6
 License: GPLv3 or later
 License URI: http://www.gnu.org/licenses/gpl-3.0.html
 
@@ -189,6 +189,10 @@ Yes. This requires a lightbox so if your theme does not include one, you will ne
 
 No. If you already have testimonials in another plugin or theme, you will have to re-enter them. Why? Because every theme and plugin stores data differently.
 
+= Where do I report security bugs found in this plugin? =
+
+Please report security bugs found in the source code of the Strong Testimonials plugin through the [Patchstack Vulnerability Disclosure  Program](https://patchstack.com/database/vdp/9e5fb49c-26b1-4725-8172-ce6b7ffc67f2). The Patchstack team will assist you with verification, CVE assignment, and notify the developers of this plugin."
+
 == Screenshots ==
 
 1. Slideshow
@@ -201,6 +205,73 @@ No. If you already have testimonials in another plugin or theme, you will have t
 8. View editor
 
 == Changelog ==
+= 3.3.6 - 06.08.2026 =
+- Fixed: Masonry column widths could be overridden by the template's default CSS.
+- Fixed: Star rating icons could be invisible when rendered without inline SVG support.
+
+= 3.3.5 - 03.08.2026 =
+- Fixed: "Enable comments for testimonials" setting not working.
+- Fixed: Saving Properties settings could reset other tabs.
+
+= 3.3.4 - 27.07.2026 =
+- Fixed: Extensions REST endpoint being cached by page caching plugins, causing stale extension states.
+- Fixed: Single template content could leak into other areas of the page that also run the `the_content` filter.
+
+= 3.3.3 - 20.07.2026 =
+- Added: New default Display and Form templates that inherit the active theme's styles.
+- Fixed: Scoped global `.disabled` CSS rule.
+
+= 3.3.2 - 06.07.2026 =
+- Added: Admin notice if the used tempalte is no longer valid.
+- Added: Upsell for the Video extension.
+
+= 3.3.1 - 26.06.2026 =
+- Fixed: Multiple undefined array key PHP warnings.
+- Fixed: Wrong product name in REST API error response.
+- Fixed: CPT and taxonomy rewrite slugs should not be translatable.
+
+= 3.3.0 - 21.05.2026 -
+- Added: Support for extensions bundled in pro.
+- Fixed: Various issues and bugs.
+- Changed: Multiple improvements to the codebase.
+- Changed: Removed legacy settings that added complexity with little benefit.
+- Changed: Settings and Extensions redesign.
+
+= 3.2.22 - 26.02.2026 -
+- Fixed: Security issue - unquoted data attributes allowed attribute breakout via shortcode id (XSS). View ID is now sanitized to integer and container data attributes are rendered with quoted values and proper escaping.
+
+= 3.2.21 - 15.01.2026 -
+- Fixed: Only admins are allowed to export testimonials.
+
+= 3.2.20 - 13.01.2026 -
+- Changed: Use scaled google reviewer images.
+- Fixed: Validate notice variable as an array.
+
+= 3.2.19 - 10.12.2025 -
+- Fixed: Security issue.
+
+= 3.2.18 - 03.11.2025 -
+- Added: Black Friday upsells & notifications updates.
+
+= 3.2.17 - 21.10.2025 -
+- Removed: Shortcode processing from the_content and the_excerpt filters.
+
+= 3.2.16 - 25.08.2025 -
+- Fixed: License activation/deactivation alternative server.
+
+= 3.2.15 - 14.08.2025 -
+- Added: Option to order the testimonials based on submission date.
+
+= 3.2.14 - 22.07.2025 -
+- Fixed: Undefined key "color" if background preset was not chosen.
+- Added: Accessibility controls for slider buttons.
+
+= 3.2.13 - 15.07.2025 -
+- Fixed: Star rating icons were not displaying correctly due to an escaping issue.
+
+= 3.2.12 - 10.07.2025 -
+- Fixed: Security issue.
+
 = 3.2.11 - 04.06.2025 -
 - Fixed: Compatibility with plugins that edit wp_kses_post allowed html list. eg. "The Post Grid".
 - Fixed: Slider image lazy-load not working properly.
@@ -239,6 +310,9 @@ No. If you already have testimonials in another plugin or theme, you will have t
 You can read the complete changelog [here](https://github.com/WPChill/strong-testimonials/blob/master/changelog.txt)
 
 == Upgrade Notice ==
+
+= 3.2.22 =
+- Security update. Fixes a vulnerability where unquoted data attributes could allow attribute breakout (XSS) via the shortcode id. Recommended to update immediately.
 
 = 3.2.4 =
 - This version introduced a fix for a reported security vulnerability.

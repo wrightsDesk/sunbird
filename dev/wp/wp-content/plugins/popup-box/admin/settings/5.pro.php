@@ -3,7 +3,7 @@
  * Page Name: PRO FEATURES 🚀
  */
 
-
+defined( 'ABSPATH' ) || exit;
 
 $features = [
 

@@ -1,5 +1,5 @@
 {
-	"apiVersion": 2,
+	"apiVersion": 3,
 	"name": "jet-forms/media-field",
 	"category": "jet-form-builder-fields",
 	"keywords": [
@@ -36,6 +36,10 @@
 		"value_format": {
 			"type": "string",
 			"default": ""
+		},
+		"delete_uploaded_attachment": {
+			"type": "boolean",
+			"default": false
 		},
 		"max_files": {
 			"type": [

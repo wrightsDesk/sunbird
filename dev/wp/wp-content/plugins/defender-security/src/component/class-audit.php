@@ -40,20 +40,24 @@ class Audit extends Component {
 	 * @param  string $user_id  User ID to filter logs.
 	 * @param  string $ip  IP address to filter logs.
 	 * @param  int    $paged  Pagination page number.
+	 * @param  int    $per_page  Number of logs per page.
 	 *
 	 * @return Audit_Log[]|WP_Error Returns an array of Audit_Log objects or WP_Error on failure.
 	 * @throws Exception Throws exception on failure.
 	 */
-	public function fetch( $date_from, $date_to, $events = array(), $user_id = '', $ip = '', $paged = 1 ) {
-		$internal = Audit_Log::query( $date_from, $date_to, $events, $user_id, $ip, $paged );
+	public function fetch( $date_from, $date_to, $events = array(), $user_id = '', $ip = '', $paged = 1, $per_page = 10 ) {
+		$internal = Audit_Log::query( $date_from, $date_to, $events, $user_id, $ip, $paged, $per_page );
 		$this->log( sprintf( 'Found %s from local', count( $internal ) ), self::AUDIT_LOG );
+		if ( ! wd_di()->get( WPMUDEV::class )->is_pro() ) {
+			return $internal;
+		}
 		$checkpoint = get_site_option( self::CACHE_LAST_CHECKPOINT );
 		if ( false === $checkpoint ) {
 			// This case where user install the plugin, have some local data but never reach to Logs page, then check point will be today.
 			$checkpoint = time();
 		}
 		$checkpoint = (int) $checkpoint;
-		$date_from  = (int) $date_from;
+		$date_from  = ! is_int( $date_from ) ? (int) $date_from : $date_from;
 		if ( 0 === count( $internal ) && $checkpoint > $date_from ) {
 			// Have to fetch from API.
 			$this->log( 'fetch from cloud', self::AUDIT_LOG );
@@ -68,7 +72,7 @@ class Audit extends Component {
 				// No data from cloud too.
 				Audit_Log::mass_insert( $cloud );
 				// Because this is roughly fetch, so we have to filter out again using the local data.
-				$internal = Audit_Log::query( $date_from, $date_to, $events, $user_id, $ip, $paged );
+				$internal = Audit_Log::query( $date_from, $date_to, $events, $user_id, $ip, $paged, $per_page );
 			}
 			// Cache the last time fetch, this will be useful in case of mixed data.
 			update_site_option( self::CACHE_LAST_CHECKPOINT, $date_from );
@@ -93,7 +97,7 @@ class Audit extends Component {
 			if ( is_array( $cloud ) ) {
 				// Silence the error here, as we actually have data.
 				Audit_Log::mass_insert( $cloud );
-				$internal = Audit_Log::query( $date_from, $date_to, $events, $user_id, $ip, $paged );
+				$internal = Audit_Log::query( $date_from, $date_to, $events, $user_id, $ip, $paged, $per_page );
 				// Cache the last time fetch, this will be useful in case of mixed data.
 				update_site_option( self::CACHE_LAST_CHECKPOINT, $date_from );
 			}
@@ -149,31 +153,15 @@ class Audit extends Component {
 		return $data['data'];
 	}
 
-	/**
-	 * Flushes logs that need to be synced with the cloud.
-	 */
-	public function flush() {
-		$logs = Audit_Log::get_logs_need_flush();
-		// Build the data.
-		$data = array();
-		foreach ( $logs as $log ) {
-			$item = $log->export();
-			unset( $item['synced'] );
-			unset( $item['safe'] );
-			unset( $item['id'] );
-			$item['msg'] = addslashes( $item['msg'] );
-			$data[]      = $item;
-		}
 
-		if ( count( $data ) ) {
-			$ret = $this->curl_to_api( $data );
-			if ( ! is_wp_error( $ret ) ) {
-				foreach ( $logs as $log ) {
-					$log->synced = 1;
-					$log->save();
-				}
-			}
-		}
+	/**
+	 * Delete all local audit log entries from database and reset checkpoint.
+	 *
+	 * @return void
+	 */
+	public function reset(): void {
+		Audit_Log::truncate();
+		delete_site_option( self::CACHE_LAST_CHECKPOINT );
 	}
 
 	/**
@@ -184,21 +172,34 @@ class Audit extends Component {
 	public function audit_clean_up_logs() {
 		$audit_settings = wd_di()->get( Audit_Logging::class );
 		$interval       = $this->calculate_date_interval( $audit_settings->storage_days );
-		$date_from      = ( new DateTime() )->setTimezone( wp_timezone() )
-											->sub( new DateInterval( 'P1Y' ) )
-											->setTime( 0, 0, 0 );
-		$date_to        = ( new DateTime() )->setTimezone( wp_timezone() )
-											->sub( new DateInterval( $interval ) );
+		// Since v5.7.0.
+		$interval = apply_filters( 'wpdef_audit_logs_store_backward', $interval );
+		$interval = is_string( $interval ) ? $interval : (string) $interval;
+
+		try {
+			$interval_obj = new DateInterval( $interval );
+		} catch ( Exception ) {
+			// Fallback if the filter supplied an incorrect value.
+			$interval_obj = new DateInterval( 'P6M' );
+		}
+
+		$date_from = ( new DateTime() )->setTimezone( wp_timezone() )
+					->sub( new DateInterval( 'P1Y' ) )
+					->setTime( 0, 0, 0 );
+		$date_to   = ( new DateTime() )->setTimezone( wp_timezone() )
+					->sub( $interval_obj );
 
 		if ( $date_from < $date_to ) {
 			// Count the logs that should be deleted.
 			$logs_count = Audit_Log::count( $date_from->getTimestamp(), $date_to->getTimestamp() );
 			if ( $logs_count > 0 ) {
+				$this->log( 'Cleaning up old logs from ' . $date_from->format( 'Y-m-d H:i:s' ) . ' to ' . $date_to->format( 'Y-m-d H:i:s' ), self::AUDIT_LOG );
+				// Since v5.0.0.
+				$delete_count = apply_filters( 'wpdef_audit_limit_deleted_logs', 50 );
 				Audit_Log::delete_old_logs(
 					$date_from->getTimestamp(),
 					$date_to->getTimestamp(),
-					// Since v5.0.0.
-					(int) apply_filters( 'wpdef_audit_limit_deleted_logs', 50 )
+					is_int( $delete_count ) ? $delete_count : (int) $delete_count,
 				);
 			}
 		}
@@ -226,82 +227,6 @@ class Audit extends Component {
 		);
 
 		return $ret;
-	}
-
-	/**
-	 * Sends data to the API using a socket connection.
-	 *
-	 * @param  array $data  Data to be sent to the API.
-	 *
-	 * @return bool Returns true on success, false on failure.
-	 */
-	public function socket_to_api( $data ) {
-		$sockets = Array_Cache::get( 'sockets', 'audit', array() );
-		// We will need to wait a bit.
-		if ( 0 === ( is_array( $sockets ) || $sockets instanceof Countable ? count( $sockets ) : 0 ) ) {
-			// Fall back.
-			return false;
-		}
-		$this->log(
-			sprintf( 'Flush %s to cloud', is_array( $data ) || $data instanceof Countable ? count( $data ) : 0 ),
-			self::AUDIT_LOG
-		);
-		$start_time = microtime( true );
-		$sks        = $sockets;
-		$r          = null;
-		$e          = null;
-		if ( ( false === stream_select( $r, $sks, $e, 1 ) ) ) {
-			// This case error happen.
-			return false;
-		}
-
-		$fp = array_shift( $sockets );
-
-		$uri  = '/logs/add_multiple';
-		$vars = http_build_query( $data );
-		$this->attach_behavior( WPMUDEV::class, WPMUDEV::class );
-		// We're sending data to the server, so we're not manipulating files. Ignore the error.
-		// @codingStandardsIgnoreStart
-		fwrite( $fp, 'POST ' . $uri . "  HTTP/1.1\r\n" );
-		fwrite( $fp, 'Host: ' . $this->strip_protocol( $this->get_endpoint() ) . "\r\n" );
-		fwrite( $fp, "Content-Type: application/x-www-form-urlencoded\r\n" );
-		fwrite( $fp, 'Content-Length: ' . strlen( $vars ) . "\r\n" );
-		fwrite( $fp, 'apikey: ' . $this->get_apikey() . "\r\n" );
-		fwrite( $fp, "Connection: close\r\n" );
-		fwrite( $fp, "\r\n" );
-		fwrite( $fp, $vars );
-		stream_set_timeout( $fp, 5 );
-		$res = '';
-		while ( ! feof( $fp ) ) {
-			$res .= fgets( $fp, 1024 );
-			// Check if the transfer has taken too long.
-			$end_time = microtime( true );
-			if ( $end_time - $start_time > 3 ) {
-				fclose( $fp );
-				break;
-			}
-		}
-		// @codingStandardsIgnoreEnd
-		return true;
-	}
-
-	/**
-	 * Open a socket to API for faster transmit.
-	 */
-	public function open_socket() {
-		$sockets  = Array_Cache::get( 'sockets', 'audit', array() );
-		$endpoint = $this->strip_protocol( $this->get_endpoint() );
-		if ( empty( $sockets ) ) {
-			$fp = stream_socket_client(
-				'ssl://' . $endpoint . ':443',
-				$errno,
-				$errstr,
-				5
-			);
-			if ( is_resource( $fp ) ) {
-				Array_Cache::set( 'sockets', array( $fp ), 'audit' );
-			}
-		}
 	}
 
 	/**
@@ -340,9 +265,13 @@ class Audit extends Component {
 				new Component\Audit\Core_Audit(),
 				new Component\Audit\Media_Audit(),
 				new Component\Audit\Post_Audit(),
-				new Component\Audit\Users_Audit(),
+				new Component\Audit\User_Audit(),
 				new Component\Audit\Options_Audit(),
 				new Component\Audit\Menu_Audit(),
+				new Component\Audit\Theme_Audit(),
+				new Component\Audit\Feature_Audit(),
+				new Component\Audit\Password_Audit(),
+				new Component\Audit\Application_Password_Audit(),
 			);
 
 			foreach ( $events_class as $class ) {

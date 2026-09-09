@@ -58,7 +58,6 @@ class Mask_Login extends Event {
 	 * Initializes the model and service, registers routes, and sets up scheduled events if the model is active.
 	 */
 	public function __construct() {
-		add_filter( 'wp_defender_advanced_tools_data', array( $this, 'script_data' ) );
 		// Internal cache, so we don't need to query many times.
 		$this->model   = wd_di()->get( Model_Mask_Login::class );
 		$this->service = wd_di()->get( Component_Mask_Login::class );
@@ -159,6 +158,7 @@ class Mask_Login extends Event {
 	 */
 	public function show_login_page(): void {
 		global $error, $interim_login, $action, $user_login, $user, $redirect_to;
+		// Simulate the environment as a "login page".
 		$GLOBALS['pagenow'] = 'wp-login.php'; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited
 		if ( $this->service->is_recovery_mode() ) {
 			( new WP_Recovery_Mode() )->initialize();
@@ -174,12 +174,8 @@ class Mask_Login extends Event {
 	 * @since 2.8.0
 	 */
 	public function before_mask_login_handle(): void {
-		// Some plugins for Cron actions clear HTTP_HOST-param.
-		$host = defender_get_data_from_request( 'HTTP_HOST', 's' );
-		if ( ! isset( $host['HTTP_HOST'] ) ) {
-			$host = '';
-		}
-		$current_url = set_url_scheme( 'http://' . $host . defender_get_data_from_request( 'REQUEST_URI', 's' ) );
+		$request_uri = (string) defender_get_data_from_request( 'REQUEST_URI', 's' );
+		$current_url = home_url( $request_uri );
 		$login_url   = $this->get_model()->get_new_login_url( $this->get_site_url() );
 
 		if (
@@ -215,6 +211,9 @@ class Mask_Login extends Event {
 		if ( ! $this->service->is_login_url() ) {
 			$redirect_path = trim( (string) wp_parse_url( $location, PHP_URL_PATH ), '/' );
 			if ( $redirect_path === $this->get_model()->mask_url ) {
+				if ( $this->is_recipient_email_action() ) {
+					return $location;
+				}
 				$this->maybe_lock();
 			}
 		}
@@ -241,7 +240,7 @@ class Mask_Login extends Event {
 		// If it is not the slug, then we redirect to the 404 redirect, or 403 wp die.
 		$requested_path               = $this->service->get_request_path();
 		$requested_path_without_slash = ltrim( $requested_path, '/' );
-		if ( ! $requested_path_without_slash && ! empty( get_option( 'permalink_structure' ) ) ) {
+		if ( ! $requested_path_without_slash && '' !== get_option( 'permalink_structure', '' ) ) {
 			return;
 		} else {
 			$params = wp_parse_args( defender_get_data_from_request( 'QUERY_STRING', 's' ), array() );
@@ -252,7 +251,8 @@ class Mask_Login extends Event {
 
 		if ( '/' . ltrim( $this->get_model()->mask_url, '/' ) === $requested_path ) {
 			// We need to redirect this one to wp-login and open it.
-			return $this->show_login_page();
+			$this->show_login_page();
+			return;
 		}
 		/**
 		 * Allowed if:
@@ -292,7 +292,8 @@ class Mask_Login extends Event {
 
 		// If current is same then we show the login screen.
 		if ( $this->service->is_land_on_masked_url( $this->model->mask_url ) ) {
-			return $this->show_login_page();
+			$this->show_login_page();
+			return;
 		}
 
 		// If it's the verification link to change Network Admin Email.
@@ -320,7 +321,8 @@ class Mask_Login extends Event {
 			|| $this->service->is_on_login_page( $requested_path_without_slash )
 		) {
 			// If they are here and the flow getting here, then just lock.
-			return $this->maybe_lock();
+			$this->maybe_lock();
+			return;
 		}
 	}
 
@@ -350,8 +352,8 @@ class Mask_Login extends Event {
 				)
 			);
 		}
-		$data_frontend     = $this->data_frontend();
-		$result['message'] = $this->model->get_formatted_errors();
+		$data_frontend = $this->data_frontend();
+		$result        = array( 'message' => $this->model->get_formatted_errors() );
 		// Don't hide the error notice if the module is not activated.
 		if ( ! $data_frontend['is_active'] ) {
 			$result['auto_close'] = false;
@@ -451,7 +453,7 @@ class Mask_Login extends Event {
 				if ( '/wp-admin' === $requested_path ) {
 					$current_domain = defender_get_data_from_request( 'HTTP_HOST', 's' );
 					$sub_domain     = wp_parse_url( $current_url, PHP_URL_HOST );
-					if ( ! empty( $sub_domain ) && false === stripos( $sub_domain, $current_domain ) ) {
+					if ( is_string( $sub_domain ) && '' !== trim( $sub_domain ) && false === stripos( $sub_domain, $current_domain ) ) {
 						return $this->get_model()->get_new_login_url( $sub_domain );
 					}
 				}
@@ -472,11 +474,6 @@ class Mask_Login extends Event {
 	 * @return void
 	 */
 	public function maybe_lock(): void {
-		$forbidden_message = esc_html__(
-			'This feature is forbidden temporarily for security reason. Try login again.',
-			'defender-security'
-		);
-
 		if ( 'custom_url' === $this->get_model()->redirect_traffic && strlen( $this->get_model()->redirect_traffic_url ) ) {
 			if ( 'url' === $this->get_model()->is_url_or_slug() ) {
 				$redirect_url = wp_sanitize_redirect( $this->get_model()->redirect_traffic_url );
@@ -484,7 +481,7 @@ class Mask_Login extends Event {
 
 				// Give up if malformed URL.
 				if ( false === $lp ) {
-					wp_die( esc_html( $forbidden_message ) );
+					$this->show_forbidden_screen();
 				}
 				// If the URL is without scheme, e.g. example.com, then add 'http' protocol at the beginning of the URL.
 				if ( ! isset( $lp['scheme'] ) && isset( $lp['path'] ) ) {
@@ -528,7 +525,20 @@ class Mask_Login extends Event {
 		// Handle user profile email change request.
 		$this->handle_email_change_request();
 
-		wp_die( esc_html( $forbidden_message ) );
+		$this->show_forbidden_screen();
+	}
+
+	/**
+	 * Show the forbidden screen.
+	 */
+	public function show_forbidden_screen(): void {
+		wp_die(
+			esc_html__( 'This feature is temporarily forbidden for security reasons. Try logging in again.', 'defender-security' ),
+			esc_html__( 'Forbidden', 'defender-security' ),
+			array(
+				'response' => 403,
+			)
+		);
 	}
 
 	/**
@@ -542,19 +552,6 @@ class Mask_Login extends Event {
 		}
 
 		return new Model_Mask_Login();
-	}
-
-	/**
-	 * Provide data to the frontend via localized script.
-	 *
-	 * @param  array $data  Data collection is ready to passed.
-	 *
-	 * @return array Modified data array with added this controller data.
-	 */
-	public function script_data( array $data ): array {
-		$data['mask_login'] = $this->data_frontend();
-
-		return $data;
 	}
 
 	/**
@@ -587,7 +584,7 @@ class Mask_Login extends Event {
 	 * @return string The site URL with the specified parameters.
 	 */
 	private function get_site_url( $blog_id = null, $path = '', $scheme = null ) {
-		if ( empty( $blog_id ) || ! is_multisite() ) {
+		if ( ! is_int( $blog_id ) || 0 === $blog_id || ! is_multisite() ) {
 			$url = get_option( 'siteurl' );
 		} else {
 			switch_to_blog( $blog_id );
@@ -849,22 +846,22 @@ class Mask_Login extends Event {
 	 */
 	public function export_strings(): array {
 		return array(
-			$this->get_model()->is_active() ? esc_html__( 'Active', 'defender-security' ) : esc_html__( 'Inactive', 'defender-security' ),
+			\WP_Defender\Model\Setting\Mask_Login::get_module_name() . ' '
+			. ( $this->get_model()->enabled ? esc_html__( 'active', 'defender-security' ) : esc_html__( 'inactive', 'defender-security' ) ),
 		);
 	}
 
 	/**
-	 * Generates configuration strings based on the provided configuration and
-	 * whether the product is a pro version.
+	 * Generates configuration strings based on the provided configuration.
 	 *
 	 * @param  array $config  Configuration data.
-	 * @param  bool  $is_pro  Indicates if the product is a pro version.
 	 *
 	 * @return array Returns an array of configuration strings.
 	 */
-	public function config_strings( array $config, bool $is_pro ): array {
+	public function config_strings( array $config ): array {
 		return array(
-			$config['enabled'] ? esc_html__( 'Active', 'defender-security' ) : esc_html__( 'Inactive', 'defender-security' ),
+			\WP_Defender\Model\Setting\Mask_Login::get_module_name() . ' '
+			. ( $config['enabled'] ? esc_html__( 'active', 'defender-security' ) : esc_html__( 'inactive', 'defender-security' ) ),
 		);
 	}
 
@@ -927,7 +924,12 @@ class Mask_Login extends Event {
 	 */
 	private function is_allowed_path( string $path ): bool {
 		// Admin post requests to admin-post.php should be allowed.
-		$allowed = 'wp-admin/admin-post.php' === $path && ! empty( defender_get_data_from_request( 'action', 'r' ) );
+		$action  = defender_get_data_from_request( 'action', 'r' );
+		$allowed = 'wp-admin/admin-post.php' === $path && is_string( $action ) && '' !== trim( $action );
+
+		if ( 'wp-admin/admin-ajax.php' === $path && $this->is_recipient_email_action() ) {
+			$allowed = true;
+		}
 
 		/**
 		 * Filter to allow whitelisting paths from login masking.
@@ -938,6 +940,35 @@ class Mask_Login extends Event {
 		 * @since 2.6.4
 		 */
 		return apply_filters( 'wd_mask_login_is_allowed_path', $allowed, $path );
+	}
+
+	/**
+	 * Check if the request is a signed recipient email action.
+	 *
+	 * @return bool
+	 */
+	private function is_recipient_email_action(): bool {
+		$action = defender_get_data_from_request( 'action', 'r' );
+		$hash   = defender_get_data_from_request( 'hash', 'r' );
+		if ( ! is_string( $hash ) || '' === trim( $hash ) ) {
+			return false;
+		}
+
+		if ( Notification::SLUG_UNSUBSCRIBE === $action ) {
+			$slug = defender_get_data_from_request( 'slug', 'r' );
+
+			return is_string( $slug ) && '' !== trim( $slug );
+		}
+
+		if ( Notification::SLUG_SUBSCRIBE !== $action ) {
+			return false;
+		}
+
+		$slug  = defender_get_data_from_request( 'uid', 'r' );
+		$slugs = defender_get_data_from_request( 'uids', 'r' );
+
+		return ( is_string( $slug ) && '' !== trim( $slug ) )
+			|| ( is_string( $slugs ) && '' !== trim( $slugs ) );
 	}
 
 	/**
@@ -1005,7 +1036,7 @@ class Mask_Login extends Event {
 		global $wpdb;
 
 		$search_term = $wp_query->get( 'search_by_post_title' );
-		if ( ! empty( $search_term ) ) {
+		if ( is_string( $search_term ) && '' !== trim( $search_term ) ) {
 			$where .= ' AND ' . $wpdb->posts . '.post_title LIKE \'%' . esc_sql( $wpdb->esc_like( $search_term ) ) . '%\'';
 		}
 
@@ -1022,10 +1053,10 @@ class Mask_Login extends Event {
 	 * @return string The modified URL.
 	 */
 	public function change_subsites_admin_url( string $url, string $path, $blog_id ) {
-		if ( empty( $path ) && ! empty( $blog_id ) ) {
+		if ( '' === trim( $path ) && is_int( $blog_id ) && 0 < $blog_id ) {
 			$mask_url = trim( $this->model->mask_url );
 
-			if ( ! empty( $mask_url ) && $this->check_if_domain_is_mapped( $url ) ) {
+			if ( '' !== $mask_url && $this->check_if_domain_is_mapped( $url ) ) {
 				$url = str_replace( 'wp-admin', $mask_url, untrailingslashit( $url ) );
 			}
 		}
@@ -1043,13 +1074,13 @@ class Mask_Login extends Event {
 	public function check_if_domain_is_mapped( string $url ): bool {
 		$is_mapped = false;
 
-		if ( ! empty( $url ) ) {
+		if ( '' !== trim( $url ) ) {
 			$url_arr     = wp_parse_url( $url );
 			$net_url_arr = wp_parse_url( network_site_url() );
 
 			if (
-				! empty( $url_arr['host'] ) &&
-				! empty( $net_url_arr['host'] ) &&
+				isset( $url_arr['host'] ) && is_string( $url_arr['host'] ) && '' !== trim( $url_arr['host'] ) &&
+				isset( $net_url_arr['host'] ) && is_string( $net_url_arr['host'] ) && '' !== trim( $net_url_arr['host'] ) &&
 				$this->get_domain_from_host( $url_arr['host'] ) !== $this->get_domain_from_host( $net_url_arr['host'] )
 			) {
 				$is_mapped = true;
@@ -1091,7 +1122,7 @@ class Mask_Login extends Event {
 	 */
 	public function update_admin_bar_menu( WP_Admin_Bar $admin_bar ) {
 		$mask_url = trim( $this->model->mask_url );
-		if ( empty( $mask_url ) ) {
+		if ( '' === $mask_url ) {
 			return;
 		}
 
@@ -1124,7 +1155,7 @@ class Mask_Login extends Event {
 	public function update_myblogs_blog_actions( string $actions, object $user_blog ) {
 		$mask_url = trim( $this->model->mask_url );
 
-		if ( empty( $mask_url ) ) {
+		if ( '' === $mask_url ) {
 			return $actions;
 		}
 

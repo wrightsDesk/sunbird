@@ -21,7 +21,7 @@ class Table_Lockout extends Component {
 
 	public const STATUS_BAN = 'ban', STATUS_NOT_BAN = 'not_ban', STATUS_ALLOWLIST = 'allowlist';
 	public const SORT_DESC  = 'latest', SORT_ASC = 'oldest', SORT_BY_IP = 'ip', SORT_BY_UA = 'user_agent';
-	public const LIMIT_20   = '20', LIMIT_50 = '50', LIMIT_100 = '100', LIMIT_ALL = '-1';
+	public const LIMIT_10   = '10', LIMIT_20   = '20', LIMIT_50 = '50', LIMIT_100 = '100', LIMIT_ALL = '-1';
 
 	/**
 	 * Retrieves the status text for a given IP address.
@@ -60,15 +60,24 @@ class Table_Lockout extends Component {
 	 */
 	private function get_types(): array {
 		return array(
-			'all'                          => esc_html__( 'All', 'defender-security' ),
-			Lockout_Log::AUTH_FAIL         => esc_html__( 'Failed login attempts', 'defender-security' ),
-			Lockout_Log::AUTH_LOCK         => esc_html__( 'Login lockout', 'defender-security' ),
-			Lockout_Log::ERROR_404         => esc_html__( '404 error', 'defender-security' ),
-			Lockout_Log::LOCKOUT_404       => esc_html__( '404 lockout', 'defender-security' ),
-			Lockout_Log::LOCKOUT_UA        => esc_html__( 'User Agent Lockout', 'defender-security' ),
-			// New IP Lockout type since 5.3.0.
-			Lockout_Log::LOCKOUT_IP_CUSTOM => esc_html__( 'Custom IP Lockout', 'defender-security' ),
-			Lockout_Log::IP_UNLOCK         => esc_html__( 'IP Unlock', 'defender-security' ),
+			'all'                                        => esc_html__( 'Any', 'defender-security' ),
+			Lockout_Log::AUTH_FAIL                       => esc_html__( 'Failed login attempts', 'defender-security' ),
+			Lockout_Log::AUTH_LOCK                       => esc_html__( 'Login lockout', 'defender-security' ),
+			Lockout_Log::ERROR_404                       => esc_html__( '404 error', 'defender-security' ),
+			Lockout_Log::LOCKOUT_404                     => esc_html__( '404 lockout', 'defender-security' ),
+			Lockout_Log::LOCKOUT_UA                      => esc_html__( 'User Agent Lockout', 'defender-security' ),
+			Lockout_Log::LOCKOUT_MALICIOUS_BOT           => esc_html__( 'Malicious Bot Lockout', 'defender-security' ),
+			Lockout_Log::LOCKOUT_FAKE_BOT                => esc_html__( 'Fake Bot Lockout', 'defender-security' ),
+			// New types since 5.3.0.
+			Lockout_Log::LOCKOUT_IP_CUSTOM               => esc_html__( 'Custom IP Lockout', 'defender-security' ),
+			Lockout_Log::IP_UNLOCK                       => esc_html__( 'IP Unlock', 'defender-security' ),
+			// New types since 5.7.0.
+			Lockout_Log::ERROR_404_XSS                   => esc_html__( 'XSS attempt', 'defender-security' ),
+			Lockout_Log::LOCKOUT_404_XSS                 => esc_html__( 'XSS lockout', 'defender-security' ),
+			Lockout_Log::ERROR_404_NON_EXISTENT_THEME    => esc_html__( 'Attempt to access non-installed theme', 'defender-security' ),
+			Lockout_Log::LOCKOUT_404_NON_EXISTENT_THEME  => esc_html__( 'Non-installed theme lockout', 'defender-security' ),
+			Lockout_Log::ERROR_404_NON_EXISTENT_PLUGIN   => esc_html__( 'Attempt to access non-installed plugin', 'defender-security' ),
+			Lockout_Log::LOCKOUT_404_NON_EXISTENT_PLUGIN => esc_html__( 'Non-installed plugin lockout', 'defender-security' ),
 		);
 	}
 
@@ -79,7 +88,7 @@ class Table_Lockout extends Component {
 	 */
 	private function ban_status(): array {
 		return array(
-			'all'                  => esc_html__( 'All', 'defender-security' ),
+			'all'                  => esc_html__( 'Any', 'defender-security' ),
 			self::STATUS_NOT_BAN   => esc_html__( 'Not Banned', 'defender-security' ),
 			self::STATUS_BAN       => esc_html__( 'Banned', 'defender-security' ),
 			self::STATUS_ALLOWLIST => esc_html__( 'Allowlisted', 'defender-security' ),
@@ -120,6 +129,7 @@ class Table_Lockout extends Component {
 	 */
 	private function limit_per_page(): array {
 		return array(
+			self::LIMIT_10  => '10',
 			self::LIMIT_20  => '20',
 			self::LIMIT_50  => '50',
 			self::LIMIT_100 => '100',
@@ -139,5 +149,38 @@ class Table_Lockout extends Component {
 			'sort_values'   => $this->sort_values(),
 			'limit_logs'    => $this->limit_per_page(),
 		);
+	}
+
+	/**
+	 * Resolves sorting parameters based on the provided sort key.
+	 *
+	 * @param  string $sort  The sort key.
+	 *
+	 * @return array An associative array containing 'order' and 'order_by' keys.
+	 */
+	public function resolve_sort( string $sort ): array {
+		switch ( $sort ) {
+			case self::SORT_BY_IP:
+				return array(
+					'order'    => 'desc',
+					'order_by' => 'ip',
+				);
+			case self::SORT_ASC:
+				return array(
+					'order'    => 'asc',
+					'order_by' => 'id',
+				);
+			case self::SORT_BY_UA:
+				return array(
+					'order'    => 'asc',
+					'order_by' => 'user_agent',
+				);
+			case self::SORT_DESC:
+			default:
+				return array(
+					'order'    => 'desc',
+					'order_by' => 'id',
+				);
+		}
 	}
 }

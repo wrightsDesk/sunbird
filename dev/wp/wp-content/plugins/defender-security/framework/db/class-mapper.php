@@ -7,7 +7,6 @@
 
 namespace Calotes\DB;
 
-use ReflectionClass;
 use Calotes\Base\Model;
 use Calotes\Base\Component;
 
@@ -101,48 +100,139 @@ class Mapper extends Component {
 	/**
 	 * Set the WHERE clause for the query based on the provided arguments.
 	 *
+	 * Supports multiple call signatures:
+	 * - where($column, $value) - equals comparison
+	 * - where($column, $operator, $value) - custom operator comparison
+	 *
 	 * @param  mixed ...$args  The conditions to apply in the WHERE clause.
 	 *
 	 * @return $this
 	 */
 	public function where( ...$args ) {
-		global $wpdb;
-		if ( 2 === count( $args ) ) {
-			list($key, $value) = $args;
-			$this->where[]     = $wpdb->prepare( "`$key` = " . $this->guess_var_type( $value ), $value ); // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$result = $this->prepare_where_args( $args );
 
+		if ( null === $result ) {
 			return $this;
 		}
 
-		[$key, $operator, $value] = $args;
+		[ $column, $operator, $value ] = $result;
+
 		if ( ! $this->valid_operator( $operator ) ) {
-			// Prevent this operator.
 			return $this;
 		}
-		if ( in_array( strtolower( $operator ), array( 'in', 'not in' ), true ) ) {
-			$tmp           = $key . " {$operator} (" . implode(
-				', ',
-				array_fill( 0, count( $value ), $this->guess_var_type( $value ) )
-			) . ')';
-			$sql           = call_user_func_array(
-				array(
-					$wpdb,
-					'prepare',
-				),
-				array_merge( array( $tmp ), $value )
-			);
+
+		$sql = $this->compile_where( $column, $operator, $value );
+
+		if ( $sql ) {
 			$this->where[] = $sql;
-		} elseif ( 'between' === strtolower( $operator ) ) {
-			$this->where[] = $wpdb->prepare(
-				"{$key} {$operator} {$this->guess_var_type($value[0])} AND {$this->guess_var_type($value[1])}", // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-				$value[0],
-				$value[1]
-			);
-		} else {
-			$this->where[] = $wpdb->prepare( "`$key` $operator {$this->guess_var_type($value)}", $value ); // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		}
 
 		return $this;
+	}
+
+	/**
+	 * Prepare where arguments - handles both 2-arg and 3-arg signatures.
+	 *
+	 * @param  array $args  The arguments passed to where().
+	 *
+	 * @return array|null [$column, $operator, $value] or null if invalid argument count.
+	 */
+	private function prepare_where_args( array $args ): ?array {
+		$count = count( $args );
+
+		if ( 2 === $count ) {
+			return array( $args[0], '=', $args[1] );
+		}
+
+		if ( 3 === $count ) {
+			return array( $args[0], $args[1], $args[2] );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Compile a where clause into SQL.
+	 *
+	 * @param  string $column    The column name.
+	 * @param  string $operator  The operator.
+	 * @param  mixed  $value     The value to compare against.
+	 *
+	 * @return string|null The compiled SQL or null if invalid.
+	 */
+	private function compile_where( string $column, string $operator, $value ): ?string {
+		global $wpdb;
+
+		$op_lower = strtolower( $operator );
+
+		// Handle IN / NOT IN operators.
+		if ( in_array( $op_lower, array( 'in', 'not in' ), true ) ) {
+			return $this->compile_where_in( $column, $operator, $value );
+		}
+
+		// Handle BETWEEN operator.
+		if ( 'between' === $op_lower ) {
+			return $this->compile_where_between( $column, $operator, $value );
+		}
+
+		// Handle basic comparison operators.
+		$placeholder = $this->guess_var_type( $value );
+
+		// phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		return $wpdb->prepare( "`$column` $operator $placeholder", $value );
+	}
+
+	/**
+	 * Compile a WHERE IN / NOT IN clause.
+	 *
+	 * @param  string $column    The column name.
+	 * @param  string $operator  The operator (IN or NOT IN).
+	 * @param  mixed  $values    The values (should be array, invalid inputs skipped).
+	 *
+	 * @return string|null The compiled SQL or null if empty values.
+	 */
+	private function compile_where_in( string $column, string $operator, $values ): ?string {
+		if ( ! is_array( $values ) || 0 === count( $values ) ) {
+			return null;
+		}
+
+		global $wpdb;
+
+		$placeholders = array();
+		foreach ( $values as $val ) {
+			$placeholders[] = $this->guess_var_type( $val );
+		}
+
+		$sql_template = "`$column` $operator (" . implode( ', ', $placeholders ) . ')';
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		return $wpdb->prepare( $sql_template, ...$values );
+	}
+
+	/**
+	 * Compile a WHERE BETWEEN clause.
+	 *
+	 * @param  string $column    The column name.
+	 * @param  string $operator  The operator (BETWEEN).
+	 * @param  mixed  $values    The values (should be array with min/max, invalid inputs skipped).
+	 *
+	 * @return string|null The compiled SQL or null if invalid values.
+	 */
+	private function compile_where_between( string $column, string $operator, $values ): ?string {
+		if ( ! is_array( $values ) || count( $values ) < 2 ) {
+			return null;
+		}
+
+		global $wpdb;
+
+		$placeholder_min = $this->guess_var_type( $values[0] );
+		$placeholder_max = $this->guess_var_type( $values[1] );
+
+		return $wpdb->prepare(
+			"`$column` $operator $placeholder_min AND $placeholder_max", // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$values[0],
+			$values[1]
+		);
 	}
 
 	/**
@@ -152,12 +242,12 @@ class Mapper extends Component {
 	 *
 	 * @return string
 	 */
-	private function guess_var_type( $value ) {
-		if ( filter_var( $value, FILTER_VALIDATE_INT ) ) {
+	private function guess_var_type( $value ): string {
+		if ( false !== filter_var( $value, FILTER_VALIDATE_INT ) ) {
 			return '%d';
 		}
 
-		if ( filter_var( $value, FILTER_VALIDATE_FLOAT ) ) {
+		if ( false !== filter_var( $value, FILTER_VALIDATE_FLOAT ) ) {
 			return '%f';
 		}
 
@@ -220,19 +310,21 @@ class Mapper extends Component {
 	}
 
 	/**
-	 * Set the limit for the SQL query based on the provided offset.
+	 * Set the limit for the SQL query based on the provided value.
 	 *
-	 * @param  mixed $offset  The offset value for the query limit.
+	 * @param  int      $limit  The limit value.
+	 * @param  int|null $offset The offset value.
 	 *
 	 * @return $this
 	 */
-	public function limit( $offset ) {
+	public function limit( $limit, $offset = null ) {
 		global $wpdb;
-		$this->limit = str_replace(
-			"'",
-			'',
-			$wpdb->prepare( 'LIMIT ' . $this->guess_var_type( $offset ), $offset ) // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, WordPress.DB.PreparedSQL.NotPrepared
-		);
+
+		if ( null === $offset ) {
+			$this->limit = $wpdb->prepare( 'LIMIT %d', $limit );
+		} else {
+			$this->limit = $wpdb->prepare( 'LIMIT %d OFFSET %d', $limit, $offset );
+		}
 
 		return $this;
 	}
@@ -433,6 +525,18 @@ class Mapper extends Component {
 		$table = self::table();
 		global $wpdb;
 
+		// Uninstall/reset flows can run in mixed Free/Pro states where some tables were never created.
+		$exists = $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			$wpdb->prepare(
+				'SHOW TABLES LIKE %s',
+				$wpdb->esc_like( $table )
+			)
+		);
+
+		if ( empty( $exists ) ) {
+			return false;
+		}
+
 		$query = "TRUNCATE TABLE $table"; // SQL is prepared here. so we can ignore WordPress.DB.PreparedSQL.NotPrepared.
 
 		return $wpdb->query( $query );  // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
@@ -450,21 +554,16 @@ class Mapper extends Component {
 	 */
 	private function table( $model = null ) {
 		if ( is_null( $model ) ) {
-			$class_name = $this->repository;
-			$model      = $this->get_model();
-		} else {
-			$class_name = $model;
+			$model = $this->get_model();
 		}
-		$refection = new ReflectionClass( $class_name );
-		if ( $refection->hasProperty( 'table' ) ) {
-			$property = $refection->getProperty( 'table' );
-			$property->setAccessible( true );
+		if ( is_object( $model ) && method_exists( $model, 'get_table' ) ) {
+			$table = $model->get_table();
+			if ( null !== $table ) {
+				global $wpdb;
 
-			$table = $property->getValue( $model );
-			global $wpdb;
-
-			// Have to set the prefix.
-			return $wpdb->base_prefix . $table;
+				// Have to set the prefix.
+				return $wpdb->base_prefix . $table;
+			}
 		}
 		// This when class doesn't exist.
 		return false;
@@ -490,11 +589,18 @@ class Mapper extends Component {
 	 * @return string
 	 * @throws \ReflectionException If class is not defined.
 	 */
-	private function query_build( $select = '*' ) {
-		$table = $this->table();
-		$where = implode( ' AND ', $this->where );
+	private function query_build( string $select = '*' ) {
+		$table       = $this->table();
+		$where_parts = array_filter(
+			$this->where,
+			static function ( $clause ) {
+				return null !== $clause && '' !== trim( (string) $clause );
+			}
+		);
+		$where       = implode( ' AND ', $where_parts );
+		$where       = '' === $where ? '1=1' : $where;
 
-		$select   = ! empty( $this->select ) ? $this->select : $select;
+		$select   = '' !== $this->select ? $this->select : $select;
 		$group_by = $this->group;
 		$order_by = $this->order;
 		$limit    = $this->limit;

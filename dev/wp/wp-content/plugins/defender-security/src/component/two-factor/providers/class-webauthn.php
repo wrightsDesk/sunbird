@@ -54,7 +54,7 @@ class Webauthn extends Two_Factor_Provider {
 	 * @return string
 	 */
 	public function get_login_label(): string {
-		return $this->get_label();
+		return $this->get_user_label();
 	}
 
 	/**
@@ -228,7 +228,8 @@ class Webauthn extends Two_Factor_Provider {
 	 */
 	public function validate_authentication( WP_User $user ) {
 		$webauthn_controller = wd_di()->get( Webauthn_Controller::class );
-		$response            = $webauthn_controller->verify_response( true );
+		// Pass $user explicitly to avoid broken binding between authentication stages.
+		$response = $webauthn_controller->verify_response( true, $user );
 
 		if ( isset( $response['success'] ) && true === $response['success'] ) {
 			return true;
@@ -419,7 +420,7 @@ class Webauthn extends Two_Factor_Provider {
 		$service_two_fa    = wd_di()->get( Two_Fa::class );
 		$enabled_providers = $service_two_fa->get_enabled_providers_for_user( $user );
 
-		if ( ! empty( $user->ID ) && true === in_array( self::$slug, $enabled_providers, true ) ) {
+		if ( isset( $user->ID ) && $user->ID > 0 && true === in_array( self::$slug, $enabled_providers, true ) ) {
 			$controller       = wd_di()->get( Webauthn_Controller::class );
 			$service_webauthn = wd_di()->get( Webauthn_Component::class );
 			$user_entity      = $controller->get_user_entity( $user->ID );

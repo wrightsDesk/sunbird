@@ -46,6 +46,7 @@ use WP_Defender\Component\Two_Factor\Providers\Fallback_Email;
 use WP_Defender\Helper\Analytics\Firewall as Firewall_Analytics;
 use WP_Defender\Model\Setting\Blacklist_Lockout as Model_Blacklist_Lockout;
 use WP_Defender\Model\Setting\Firewall as Model_Firewall;
+use WP_Defender\Component\User_Agent as User_Agent_Service;
 use function WP_Filesystem;
 
 /**
@@ -67,18 +68,18 @@ class Upgrader {
 		$model  = wd_di()->get( Security_Headers::class );
 		$option = get_site_option( $model->get_table() );
 
-		if ( empty( $option ) ) {
+		if ( null === $option || false === $option || '' === $option || '0' === $option || array() === $option ) {
 			// Part of Security tweaks data.
 			$old_key      = 'wd_hardener_settings';
 			$old_settings = get_site_option( $old_key );
 			if ( ! is_array( $old_settings ) ) {
 				$old_settings = json_decode( $old_settings, true );
-				if ( is_array( $old_settings ) && isset( $old_settings['data'] ) && ! empty( $old_settings['data'] ) ) {
+				if ( is_array( $old_settings ) && isset( $old_settings['data'] ) && is_array( $old_settings['data'] ) && array() !== $old_settings['data'] ) {
 					// Exist 'X-Frame-Options'.
-					if ( isset( $old_settings['data']['sh_xframe'] ) && ! empty( $old_settings['data']['sh_xframe'] ) ) {
+					if ( isset( $old_settings['data']['sh_xframe'] ) && is_array( $old_settings['data']['sh_xframe'] ) && array() !== $old_settings['data']['sh_xframe'] ) {
 						$header_data = $old_settings['data']['sh_xframe'];
 
-						$mode = ( isset( $header_data['mode'] ) && ! empty( $header_data['mode'] ) )
+						$mode = ( isset( $header_data['mode'] ) && '' !== trim( $header_data['mode'] ) )
 							? strtolower( $header_data['mode'] )
 							: false;
 						/**
@@ -95,11 +96,15 @@ class Upgrader {
 					}
 
 					// Exist 'X-XSS-Protection'.
-					if ( isset( $old_settings['data']['sh_xss_protection'] ) && ! empty( $old_settings['data']['sh_xss_protection'] ) ) {
+					if (
+						isset( $old_settings['data']['sh_xss_protection'] )
+						&& is_array( $old_settings['data']['sh_xss_protection'] )
+						&& array() !== $old_settings['data']['sh_xss_protection']
+					) {
 						$header_data = $old_settings['data']['sh_xss_protection'];
 
 						if ( isset( $header_data['mode'] )
-							&& ! empty( $header_data['mode'] )
+							&& '' !== trim( $header_data['mode'] )
 							&& in_array( $header_data['mode'], array( 'sanitize', 'block' ), true )
 						) {
 							$model->sh_xss_protection_mode = $header_data['mode'];
@@ -108,53 +113,85 @@ class Upgrader {
 					}
 
 					// Exist 'X-Content-Type-Options'.
-					if ( isset( $old_settings['data']['sh_content_type_options'] ) && ! empty( $old_settings['data']['sh_content_type_options'] ) ) {
+					if (
+						isset( $old_settings['data']['sh_content_type_options'] )
+						&& is_array( $old_settings['data']['sh_content_type_options'] )
+						&& array() !== $old_settings['data']['sh_content_type_options']
+					) {
 						$header_data = $old_settings['data']['sh_content_type_options'];
 
-						if ( isset( $header_data['mode'] ) && ! empty( $header_data['mode'] ) ) {
+						if ( isset( $header_data['mode'] ) && '' !== trim( $header_data['mode'] ) ) {
 							$model->sh_content_type_options_mode = $header_data['mode'];
 							$model->sh_content_type_options      = true;
 						}
 					}
 
 					// Exist 'Strict Transport'.
-					if ( isset( $old_settings['data']['sh_strict_transport'] ) && ! empty( $old_settings['data']['sh_strict_transport'] ) ) {
+					if (
+						isset( $old_settings['data']['sh_strict_transport'] )
+						&& is_array( $old_settings['data']['sh_strict_transport'] )
+						&& array() !== $old_settings['data']['sh_strict_transport']
+					) {
 						$header_data = $old_settings['data']['sh_strict_transport'];
 
-						if ( isset( $header_data['hsts_preload'] ) && ! empty( $header_data['hsts_preload'] ) ) {
-							$model->hsts_preload = (int) $header_data['hsts_preload'];
+						$hsts_preload = isset( $header_data['hsts_preload'] ) ? (int) $header_data['hsts_preload'] : 0;
+						if ( 0 < $hsts_preload ) {
+							$model->hsts_preload = $hsts_preload;
 						}
-						if ( isset( $header_data['include_subdomain'] ) && ! empty( $header_data['include_subdomain'] ) ) {
+						if (
+							isset( $header_data['include_subdomain'] )
+							&& ! is_null( $header_data['include_subdomain'] )
+							&& '' !== $header_data['include_subdomain']
+							&& '0' !== $header_data['include_subdomain']
+							&& false !== $header_data['include_subdomain']
+							&& ( ! is_int( $header_data['include_subdomain'] ) || 0 < $header_data['include_subdomain'] )
+						) {
 							$model->include_subdomain = in_array(
 								$header_data['include_subdomain'],
 								array( 'true', '1', 1 ),
 								true
 							) ? 1 : 0;
 						}
-						if ( isset( $header_data['hsts_cache_duration'] ) && ! empty( $header_data['hsts_cache_duration'] ) ) {
-							$model->hsts_cache_duration = $header_data['hsts_cache_duration'];
+						$cache_duration = isset( $header_data['hsts_cache_duration'] ) ? trim( $header_data['hsts_cache_duration'] ) : '';
+						if ( '' !== $cache_duration ) {
+							$model->hsts_cache_duration = $cache_duration;
 						}
 						$model->sh_strict_transport = true;
 					}
 
 					// Exist 'Referrer Policy'.
-					if ( isset( $old_settings['data']['sh_referrer_policy'] ) && ! empty( $old_settings['data']['sh_referrer_policy'] ) ) {
+					if (
+						isset( $old_settings['data']['sh_referrer_policy'] )
+						&& is_array( $old_settings['data']['sh_referrer_policy'] )
+						&& array() !== $old_settings['data']['sh_referrer_policy']
+					) {
 						$header_data = $old_settings['data']['sh_referrer_policy'];
 
-						if ( isset( $header_data['mode'] ) && ! empty( $header_data['mode'] ) ) {
+						if ( isset( $header_data['mode'] ) && '' !== trim( $header_data['mode'] ) ) {
 							$model->sh_referrer_policy_mode = $header_data['mode'];
 							$model->sh_referrer_policy      = true;
 						}
 					}
 
 					// Exist 'Feature-Policy'.
-					if ( isset( $old_settings['data']['sh_feature_policy'] ) && ! empty( $old_settings['data']['sh_feature_policy'] ) ) {
+					if (
+						isset( $old_settings['data']['sh_feature_policy'] )
+						&& is_array( $old_settings['data']['sh_feature_policy'] )
+						&& array() !== $old_settings['data']['sh_feature_policy']
+					) {
 						$header_data = $old_settings['data']['sh_feature_policy'];
 
-						if ( isset( $header_data['mode'] ) && ! empty( $header_data['mode'] ) ) {
+						if ( isset( $header_data['mode'] ) && '' !== trim( $header_data['mode'] ) ) {
 							$mode                          = strtolower( $header_data['mode'] );
 							$model->sh_feature_policy_mode = $mode;
-							if ( 'origins' === $mode && isset( $header_data['values'] ) && ! empty( $header_data['values'] ) ) {
+							if (
+								'origins' === $mode
+								&& isset( $header_data['values'] )
+								&& (
+									( is_array( $header_data['values'] ) && array() !== $header_data['values'] )
+									|| ( is_string( $header_data['values'] ) && '' !== trim( $header_data['values'] ) )
+								)
+							) {
 								// The values differ from the values of the 'X-Frame-Options' key, because they may be an array.
 								if ( is_array( $header_data['values'] ) ) {
 									$model->sh_feature_policy_urls = implode( PHP_EOL, $header_data['values'] );
@@ -209,7 +246,7 @@ class Upgrader {
 		) {
 			$config_component = wd_di()->get( Backup_Settings::class );
 			$prev_data        = $config_component->backup_data();
-			if ( empty( $prev_data ) ) {
+			if ( ! is_array( $prev_data ) || array() === $prev_data ) {
 				return;
 			}
 			$adapter       = wd_di()->get( Config_Adapter::class );
@@ -219,7 +256,7 @@ class Upgrader {
 			update_site_option( 'wp_defender_shown_activator', true );
 
 			$configs = $config_component->get_configs();
-			if ( ! empty( $configs ) ) {
+			if ( array() !== $configs ) {
 				foreach ( $configs as $k => $config ) {
 					if (
 						$config_component->verify_config_data( $config )
@@ -250,7 +287,7 @@ class Upgrader {
 		// Update Scan settings.
 		$model_settings = wd_di()->get( Scan_Settings::class );
 		$option         = get_site_option( $model_settings->get_table() );
-		if ( ! empty( $option ) && ! is_array( $option ) ) {
+		if ( is_string( $option ) && '' !== trim( $option ) ) {
 			$old_settings = json_decode( $option, true );
 			if ( is_array( $old_settings ) && isset( $old_settings['max_filesize'] ) ) {
 				$model_settings->filesize = (int) $old_settings['max_filesize'];
@@ -259,7 +296,7 @@ class Upgrader {
 		}
 		// Update 'reminder_duration' value inside the Security Key tweak.
 		$old_settings = get_site_option( 'wd_hardener_settings' );
-		if ( ! empty( $old_settings ) && ! is_array( $old_settings ) ) {
+		if ( is_string( $old_settings ) && '' !== trim( $old_settings ) ) {
 			$old_settings  = json_decode( $old_settings, true );
 			$tweak_sec_key = wd_di()->get( Security_Key::class );
 
@@ -283,7 +320,7 @@ class Upgrader {
 	 */
 	private function migrate_scan_integrity_check(): void {
 		$model             = new Scan_Settings();
-		$model->check_core = (bool) $model->integrity_check;
+		$model->check_core = $model->integrity_check;
 		$model->save();
 	}
 
@@ -300,7 +337,9 @@ class Upgrader {
 		}
 
 		$db_version = get_site_option( 'wd_db_version' );
-		if ( empty( $db_version ) ) {
+		if ( ! is_string( $db_version ) || '' === $db_version ) {
+			self::cache_event_time( 'plugin_installed' );
+			$this->create_database_tables_common();
 			update_site_option( 'wd_db_version', DEFENDER_DB_VERSION );
 			update_site_option( Feature_Modal::FEATURE_SLUG, true );
 
@@ -308,9 +347,19 @@ class Upgrader {
 		}
 
 		if ( DEFENDER_DB_VERSION === $db_version ) {
+			// Check if we need to create pro tables (Free to Pro upgrade scenario).
+			if ( class_exists( Bootstrap::class ) && method_exists( Bootstrap::class, 'create_database_tables' ) && false === (bool) get_site_option( 'wd_pro_tables_created', false ) ) {
+				wd_di()->get( Bootstrap::class )->create_database_tables();
+			}
 			return;
 		}
-		$this->create_database_tables();
+		// Cache last updated time.
+		self::cache_event_time( 'plugin_upgraded' );
+
+		$this->create_database_tables_common();
+		if ( class_exists( Bootstrap::class ) && method_exists( Bootstrap::class, 'create_database_tables' ) ) {
+			wd_di()->get( Bootstrap::class )->create_database_tables();
+		}
 		$this->maybe_show_new_features( $db_version );
 		$this->migrate_configs( $db_version );
 
@@ -417,10 +466,50 @@ class Upgrader {
 		if ( version_compare( $db_version, '5.3.1', '<' ) ) {
 			$this->upgrade_5_3_1();
 		}
+		if ( version_compare( $db_version, '5.4.0', '<' ) ) {
+			$this->upgrade_5_4_0();
+		}
+		if ( version_compare( $db_version, '5.5.0', '<' ) ) {
+			$this->upgrade_5_5_0();
+		}
+		if ( version_compare( $db_version, '5.6.0', '<' ) ) {
+			$this->upgrade_5_6_0();
+		}
+		if ( version_compare( $db_version, '5.7.0', '<' ) ) {
+			$this->upgrade_5_7_0();
+		}
+		if ( version_compare( $db_version, '6.0.0', '<' ) ) {
+			$this->upgrade_6_0_0();
+		}
+		if ( version_compare( $db_version, '6.1.0', '<' ) ) {
+			$this->upgrade_6_1_0();
+		}
+		if ( version_compare( $db_version, '6.2.0', '<' ) ) {
+			$this->upgrade_6_2_0();
+		}
 		// This is not a new installation. Make a mark.
 		defender_no_fresh_install();
 		// Don't run any function below this line.
 		update_site_option( 'wd_db_version', DEFENDER_DB_VERSION );
+	}
+
+	/**
+	 * Cache the event time.
+	 *
+	 * @param string $event Event key.
+	 */
+	private static function cache_event_time( $event ) {
+		$option_key            = \WP_Defender\Helper\Analytics\Deactivation_Survey::EVENT_DATA_OPTION;
+		$event_times           = get_site_option( $option_key, array() );
+		$event_times[ $event ] = time();
+		update_site_option( $option_key, $event_times );
+	}
+
+	/**
+	 * Cache the last activated time.
+	 */
+	public static function date_activated() {
+		self::cache_event_time( 'plugin_activated' );
 	}
 
 	/**
@@ -639,9 +728,9 @@ class Upgrader {
 	private function force_nf_lockout_exclusions(): void {
 		$nf_settings       = new Notfound_Lockout();
 		$allowlist         = $nf_settings->get_lockout_list( 'allowlist' );
-		$default_allowlist = array( '.css', '.js', '.map' );
+		$default_allowlist = array( '/cdn-cgi/challenge-platform/' );
 		$is_save           = false;
-		if ( ! empty( $allowlist ) ) {
+		if ( array() !== $allowlist ) {
 			foreach ( $default_allowlist as $item ) {
 				if ( ! in_array( $item, $allowlist, true ) ) {
 					$allowlist[] = $item;
@@ -650,7 +739,7 @@ class Upgrader {
 			}
 			$nf_settings->whitelist = implode( "\n", $allowlist );
 		} else {
-			$nf_settings->whitelist = ".css\n.js\n.map";
+			$nf_settings->whitelist = ".css\n.js\n.map\n/cdn-cgi/challenge-platform/";
 			$is_save                = true;
 		}
 		// Save it.
@@ -669,7 +758,9 @@ class Upgrader {
 		$adapted_component = wd_di()->get( Legacy_Versions::class );
 		$issue_list        = $adapted_component->get_scan_issue_data();
 		$ignored_list      = $adapted_component->get_scan_ignored_data();
-		if ( ! empty( $issue_list ) || ! empty( $ignored_list ) ) {
+		if (
+			( is_array( $issue_list ) && array() !== $issue_list )
+			|| ( is_array( $ignored_list ) && array() !== $ignored_list ) ) {
 			$adapted_component->migrate_scan_data( $issue_list, $ignored_list );
 			$adapted_component->remove_old_scan_data( $issue_list, $ignored_list );
 			$adapted_component->change_onboarding_status();
@@ -690,16 +781,15 @@ class Upgrader {
 	 * @return void
 	 */
 	private function update_scan_error_send_body( $model ): void {
-		if (
-			isset( $model->configs['template']['error']['body'] )
-			&& ! empty( $model->configs['template']['error']['body'] )
-		) {
+		$body = isset( $model->configs['template']['error']['body'] ) ? trim( $model->configs['template']['error']['body'] ) : '';
+
+		if ( '' !== $body ) {
 			$needle = '{follow this link} and check the logs to see what casued the failure';
-			if ( false !== stripos( $model->configs['template']['error']['body'], $needle ) ) {
+			if ( false !== stripos( $body, $needle ) ) {
 				$model->configs['template']['error']['body'] = str_replace(
 					$needle,
 					'visit your site and run a manual scan',
-					$model->configs['template']['error']['body']
+					$body
 				);
 				$model->save();
 			}
@@ -716,7 +806,7 @@ class Upgrader {
 		// Update the title of the basic config.
 		$config_component = wd_di()->get( Backup_Settings::class );
 		$configs          = $config_component->get_configs();
-		if ( ! empty( $configs ) ) {
+		if ( array() !== $configs ) {
 			foreach ( $configs as $k => $config ) {
 				if ( 0 === strcmp( $config['name'], esc_html__( 'Basic config', 'defender-security' ) ) ) {
 					$config['name'] = esc_html__( 'Basic Config', 'defender-security' );
@@ -763,30 +853,33 @@ Your temporary password is {{passcode}}. To finish logging in, copy and paste th
 
 		foreach ( $models as $model ) {
 			$is_updated = false;
-			if ( ! empty( $model->configs['template']['error']['body'] ) ) {
-				$subject = $this->replace_scan_email_content_error( $model->configs['template']['error']['body'] );
+			$body       = isset( $model->configs['template']['error']['body'] ) ? trim( $model->configs['template']['error']['body'] ) : '';
+			if ( '' !== $body ) {
+				$subject = $this->replace_scan_email_content_error( $body );
 
-				if ( $model->configs['template']['error']['body'] !== $subject ) {
+				if ( $body !== $subject ) {
 					$is_updated = true;
 
 					$model->configs['template']['error']['body'] = $subject;
 				}
 			}
 
-			if ( ! empty( $model->configs['template']['found']['body'] ) ) {
-				$subject = $this->replace_scan_email_content_issue_found( $model->configs['template']['found']['body'] );
+			$body = isset( $model->configs['template']['found']['body'] ) ? trim( $model->configs['template']['found']['body'] ) : '';
+			if ( '' !== $body ) {
+				$subject = $this->replace_scan_email_content_issue_found( $body );
 
-				if ( $model->configs['template']['found']['body'] !== $subject ) {
+				if ( $body !== $subject ) {
 					$is_updated = true;
 
 					$model->configs['template']['found']['body'] = $subject;
 				}
 			}
 
-			if ( ! empty( $model->configs['template']['not_found']['body'] ) ) {
-				$subject = $this->replace_scan_email_content_issue_not_found( $model->configs['template']['not_found']['body'] );
+			$body = isset( $model->configs['template']['not_found']['body'] ) ? trim( $model->configs['template']['not_found']['body'] ) : '';
+			if ( '' !== $body ) {
+				$subject = $this->replace_scan_email_content_issue_not_found( $body );
 
-				if ( $model->configs['template']['not_found']['body'] !== $subject ) {
+				if ( $body !== $subject ) {
 					$is_updated = true;
 
 					$model->configs['template']['not_found']['body'] = $subject;
@@ -826,7 +919,7 @@ Your temporary password is {{passcode}}. To finish logging in, copy and paste th
 		$scan_settings->scheduled_scanning = Notification::STATUS_ACTIVE === $malware_report->status;
 		$scan_settings->frequency          = $malware_report->frequency;
 		$scan_settings->day                = $malware_report->day;
-		$scan_settings->day_n              = $malware_report->day_n;
+		$scan_settings->day_n              = (int) $malware_report->day_n;
 		$scan_settings->time               = $malware_report->time;
 		$scan_settings->save();
 
@@ -851,11 +944,11 @@ Your temporary password is {{passcode}}. To finish logging in, copy and paste th
 		);
 
 		foreach ( $models as $model ) {
-			if ( ! empty( $model->in_house_recipients ) && is_array( $model->in_house_recipients ) ) {
+			if ( is_array( $model->in_house_recipients ) && array() !== $model->in_house_recipients ) {
 				$is_updated = false;
 
 				foreach ( $model->in_house_recipients as &$recipient ) {
-					if ( empty( $recipient['role'] ) ) {
+					if ( ! isset( $recipient['role'] ) || ! is_string( $recipient['role'] ) || '' === trim( $recipient['role'] ) ) {
 						$is_updated        = true;
 						$recipient['role'] = $this->get_current_user_role( $recipient['id'] );
 					}
@@ -980,7 +1073,7 @@ Your temporary password is {{passcode}}. To finish logging in, copy and paste th
 	private function upgrade_3_2_0(): void {
 		$model = wd_di()->get( Two_Fa_Settings::class );
 
-		if ( ! empty( $model->app_title ) ) {
+		if ( is_string( $model->app_title ) && '' !== $model->app_title ) {
 			$model->app_title = wp_specialchars_decode( $model->app_title, ENT_QUOTES );
 		}
 
@@ -1016,7 +1109,7 @@ Your temporary password is {{passcode}}. To finish logging in, copy and paste th
 				$wpdb->prepare( "SELECT blog_id FROM {$wpdb->blogs} LIMIT %d, %d", $offset, $limit ),
 				ARRAY_A
 			);
-			while ( ! empty( $blogs ) && is_array( $blogs ) ) {
+			while ( is_array( $blogs ) && array() !== $blogs ) {
 				foreach ( $blogs as $blog ) {
 					switch_to_blog( $blog['blog_id'] );
 
@@ -1054,7 +1147,7 @@ Your temporary password is {{passcode}}. To finish logging in, copy and paste th
 		$users = get_users( array( 'fields' => array( 'ID', 'user_login', 'display_name' ) ) );
 
 		foreach ( $users as $user ) {
-			if ( empty( $data ) ) {
+			if ( ! is_array( $data ) || array() === $data ) {
 				break;
 			}
 
@@ -1080,7 +1173,7 @@ Your temporary password is {{passcode}}. To finish logging in, copy and paste th
 				}
 			}
 
-			if ( ! empty( $user_credentials ) ) {
+			if ( array() !== $user_credentials ) {
 				$service->setCredentials( (int) $user->ID, $user_credentials );
 			}
 		}
@@ -1142,7 +1235,7 @@ Your temporary password is {{passcode}}. To finish logging in, copy and paste th
 			// Hashed codes.
 			foreach ( $query->get_results() as $user_id ) {
 				$backup_code = get_user_meta( $user_id, Fallback_Email::FALLBACK_BACKUP_CODE_KEY, true );
-				if ( ! empty( $backup_code ) && isset( $backup_code['code'], $backup_code['time'] ) ) {
+				if ( isset( $backup_code['code'], $backup_code['time'] ) ) {
 					update_user_meta(
 						$user_id,
 						Fallback_Email::FALLBACK_BACKUP_CODE_KEY,
@@ -1296,7 +1389,6 @@ Your temporary password is {{passcode}}. To finish logging in, copy and paste th
 	private function update_malware_notification_setting(): void {
 		$models = array(
 			wd_di()->get( Malware_Notification::class ),
-			wd_di()->get( Malware_Report::class ),
 		);
 
 		foreach ( $models as $model ) {
@@ -1452,7 +1544,7 @@ Your temporary password is {{passcode}}. To finish logging in, copy and paste th
 					$is_updated = true;
 				}
 				$prev_desc = $config['description'];
-				$new_desc  = empty( $config['description'] ) ? '' : sanitize_textarea_field( $config['description'] );
+				$new_desc  = ! is_string( $config['description'] ) || '' === trim( $config['description'] ) ? '' : sanitize_textarea_field( $config['description'] );
 				if ( $prev_desc !== $new_desc ) {
 					$is_updated = true;
 				}
@@ -1480,8 +1572,6 @@ Your temporary password is {{passcode}}. To finish logging in, copy and paste th
 		$wpdb->query( "ALTER TABLE{$wpdb->base_prefix}defender_lockout MODIFY COLUMN ip VARCHAR(45)" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		// Changes for Lockout log table.
 		$wpdb->query( "ALTER TABLE{$wpdb->base_prefix}defender_lockout_log MODIFY COLUMN ip VARCHAR(45)" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-		// Changes for Audit log table.
-		$wpdb->query( "ALTER TABLE{$wpdb->base_prefix}defender_audit_log MODIFY COLUMN ip VARCHAR(45)" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		$wpdb->show_errors( $prev_val );
 	}
 
@@ -1493,7 +1583,7 @@ Your temporary password is {{passcode}}. To finish logging in, copy and paste th
 	private function upgrade_3_11_0(): void {
 		// Move Global IP settings.
 		$option = get_site_option( wd_di()->get( Model_Blacklist_Lockout::class )->get_table() );
-		if ( ! empty( $option ) && is_string( $option ) ) {
+		if ( is_string( $option ) && '' !== trim( $option ) ) {
 			$old_settings = json_decode( $option, true );
 			if ( is_array( $old_settings ) && isset( $old_settings['global_ip_list'] ) ) {
 				$model_global_ip          = wd_di()->get( Global_Ip_Lockout::class );
@@ -1578,7 +1668,7 @@ Your temporary password is {{passcode}}. To finish logging in, copy and paste th
 				),
 				ARRAY_A
 			);
-			while ( ! empty( $blogs ) && is_array( $blogs ) ) {
+			while ( is_array( $blogs ) && array() !== $blogs ) {
 				foreach ( $blogs as $blog ) {
 					switch_to_blog( $blog['blog_id'] );
 
@@ -1738,7 +1828,7 @@ To complete your login, copy and paste the temporary password into the Password 
 	private function update_ua_blocklist(): void {
 		$settings  = wd_di()->get( User_Agent_Lockout::class );
 		$blacklist = $settings->get_lockout_list( 'blocklist', false );
-		if ( empty( $blacklist ) ) {
+		if ( array() === $blacklist ) {
 			return;
 		}
 		$blacklist           = array_filter(
@@ -1758,8 +1848,6 @@ To complete your login, copy and paste the temporary password into the Password 
 	 */
 	private function upgrade_5_2_0(): void {
 		$this->update_ua_blocklist();
-		// Remove the prev Breadcrumbs.
-		wd_di()->get( \WP_Defender\Controller\Strong_Password::class )->remove_data();
 		// Add the "What's new" modal.
 		update_site_option( Feature_Modal::FEATURE_SLUG, true );
 	}
@@ -1791,5 +1879,483 @@ To complete your login, copy and paste the temporary password into the Password 
 	 */
 	private function upgrade_5_3_1(): void {
 		delete_site_transient( \WP_Defender\Component\IP\Antibot_Global_Firewall::BLOCKLIST_STATS_KEY );
+	}
+
+	/**
+	 * Improve UA Blocklist.
+	 *
+	 * @return void
+	 */
+	private function improve_ua_blocklist(): void {
+		$settings         = wd_di()->get( User_Agent_Lockout::class );
+		$blocklist_custom = $settings->get_lockout_list( 'blocklist' );
+		if ( array() === $blocklist_custom ) {
+			return;
+		}
+		// Get 'Blocklist Presets', check and remove duplicates on 'Custom User Agents'.
+		$blocklist_presets = User_Agent_Service::get_nested_keys_of_blocklist_presets();
+		$common_result     = array_intersect( $blocklist_custom, $blocklist_presets );
+		if ( array() !== $common_result ) {
+			$blocklist_custom = User_Agent_Service::check_and_remove_duplicates(
+				$blocklist_custom,
+				$common_result
+			);
+			// Convert back to string.
+			$settings->blacklist = implode( PHP_EOL, $blocklist_custom );
+			// Enable option with nested suboptions.
+			$settings->blocklist_presets       = true;
+			$settings->blocklist_preset_values = $common_result;
+		}
+		// The same, but for 'Script Presets'.
+		$script_presets = array_keys( User_Agent_Service::get_script_presets() );
+		$common_result  = array_intersect( $blocklist_custom, $script_presets );
+		if ( array() !== $common_result ) {
+			$blocklist_custom = User_Agent_Service::check_and_remove_duplicates(
+				$blocklist_custom,
+				$common_result
+			);
+			// Convert back to string.
+			$settings->blacklist = implode( PHP_EOL, $blocklist_custom );
+			// Enable option with nested suboptions.
+			$settings->script_presets       = true;
+			$settings->script_preset_values = $common_result;
+		}
+		$settings->save();
+	}
+
+	/**
+	 * Upgrade to 5.4.0.
+	 *
+	 * @return void
+	 */
+	private function upgrade_5_4_0(): void {
+		update_site_option( Feature_Modal::FEATURE_SLUG, true );
+
+		$this->improve_ua_blocklist();
+	}
+
+	/**
+	 * Upgrade to 5.5.0.
+	 *
+	 * @return void
+	 */
+	private function upgrade_5_5_0(): void {
+		update_site_option( Feature_Modal::FEATURE_SLUG, true );
+	}
+
+	/**
+	 * Change lockout log mentions from fake_bot to malicious_bot. Also move BotTrap settings.
+	 *
+	 * @return void
+	 */
+	private function change_to_malicious_bot(): void {
+		global $wpdb;
+
+		$table_name = $wpdb->base_prefix . 'defender_lockout_log';
+
+		$wpdb->query( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wpdb->prepare(
+				"UPDATE $table_name SET type = %s, log = %s WHERE type = %s", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				'malicious_bot',
+				'Lockout occurred: Bot ignored robots.txt rules.',
+				'bot_trap'
+			)
+		);
+		// Clear schedule as the name has changed to 'wpdef_rotate_malicious_bot_secret_hash'.
+		wp_clear_scheduled_hook( 'wpdef_rotate_bot_trap_secret_hash' );
+		// Move the BotTrap settings to new Malicious Bot settings.
+		$settings = wd_di()->get( User_Agent_Lockout::class );
+		if ( isset( $settings->bot_trap_enabled ) ) {
+			$settings->malicious_bot_enabled               = $settings->bot_trap_enabled;
+			$settings->malicious_bot_lockout_type          = $settings->bot_trap_lockout_type;
+			$settings->malicious_bot_lockout_duration      = $settings->bot_trap_lockout_duration;
+			$settings->malicious_bot_lockout_duration_unit = $settings->bot_trap_lockout_duration_unit;
+			$settings->save();
+		}
+	}
+
+	/**
+	 * Upgrade to 5.6.0.
+	 *
+	 * @return void
+	 */
+	private function upgrade_5_6_0(): void {
+		$this->change_to_malicious_bot();
+		// Add the "What's new" modal.
+		update_site_option( Feature_Modal::FEATURE_SLUG, true );
+	}
+
+	/**
+	 * Upgrade to 5.7.0.
+	 *
+	 * @return void
+	 */
+	private function upgrade_5_7_0(): void {
+		// Remove old objects from ncm options.
+		wd_di()->get( \WP_Defender\Component\Network_Cron_Manager::class )->remove_data();
+		// Add the "What's new" modal.
+		update_site_option( Feature_Modal::FEATURE_SLUG, true );
+		// Add Cloudflare challenge-platform to 404 whitelist.
+		$this->force_nf_lockout_exclusions();
+	}
+
+	/**
+	 * Migrates the uninstall settings from v5.11 to v6.0.
+	 *
+	 * During the upgrade:
+	 * - If at least one of the three options is set to Preserve/Keep,
+	 *   all three options are set to Preserve/Keep.
+	 */
+	private function combine_all_preserve_settings_to_one() {
+		$main_settings = wd_di()->get( \WP_Defender\Model\Setting\Main_Setting::class );
+
+		if (
+			'preserve' === $main_settings->uninstall_settings ||
+			'keep' === $main_settings->uninstall_data ||
+			'keep' === $main_settings->uninstall_quarantine
+		) {
+			$main_settings->uninstall_settings   = 'preserve';
+			$main_settings->uninstall_data       = 'keep';
+			$main_settings->uninstall_quarantine = 'keep';
+			$main_settings->save();
+		}
+	}
+
+	/**
+	 * Since with version 6.0.0, two nested options:
+	 * - Scan core files
+	 * - Scan plugin files,
+	 * are hidden, and automatically take the value of the parent "File change detection" option.
+	 */
+	private function combine_all_file_change_detection_settings_to_one() {
+		$scan_settings = wd_di()->get( Scan_Settings::class );
+		if ( $scan_settings->integrity_check ) {
+			$scan_settings->check_core    = true;
+			$scan_settings->check_plugins = true;
+		} else {
+			$scan_settings->check_core    = false;
+			$scan_settings->check_plugins = false;
+		}
+		$scan_settings->save();
+	}
+
+	/**
+	 * Upgrade to 6.0.0: Ensure quarantine table exists for Free HC users and other changes.
+	 * The quarantine feature is now available in the free version.
+	 *
+	 * @return void
+	 */
+	private function upgrade_6_0_0(): void {
+		$bootstrap = wd_di()->get( Bootstrap::class );
+		$bootstrap->create_table_quarantine();
+		$this->combine_all_preserve_settings_to_one();
+		$this->combine_all_file_change_detection_settings_to_one();
+		$this->update_issues_report_email_template();
+		$this->fix_scheduled_scanning_left_disabled();
+		$this->migrate_tweak_reminder_schedule();
+		$this->migrate_two_fa_force_auth_roles();
+		// Add the "What's new" modal only when landing on the exact release it belongs to,
+		// so it does not persist into later patch/minor releases (e.g. 6.0.1, 6.1).
+		Feature_Modal::maybe_enable_welcome_modal();
+	}
+
+	/**
+	 * Upgrade to 6.1.0: Fix Tweak Reminder est_timestamp left as 0 by the 6.0.0 migration.
+	 * Also sync all report schedules to match Malware Report.
+	 *
+	 * @return void
+	 */
+	private function upgrade_6_1_0(): void {
+		$model = wd_di()->get( Tweak_Reminder::class );
+		if ( 'report' === $model->type && (int) $model->est_timestamp <= 0 ) {
+			// Calling save() recovers the correct state: last_sent is
+			// reset to now if it is 0, then est_timestamp is recomputed via get_next_run().
+			$model->save();
+		}
+
+		$this->sync_all_report_schedules();
+	}
+
+	/**
+	 * Upgrade to 6.2.0.
+	 *
+	 * @return void
+	 */
+	private function upgrade_6_2_0(): void {
+		$this->fix_notification_recipients_format();
+		$this->cancel_recipients_of_inactive_reports();
+	}
+
+	/**
+	 * Unsubscribe every recipient of each inactive report so their stored preferences match
+	 * the reports' last saved on/off state.
+	 *
+	 * @return void
+	 */
+	private function cancel_recipients_of_inactive_reports(): void {
+		$report_classes = array(
+			Tweak_Reminder::class,
+			Malware_Report::class,
+			Firewall_Report::class,
+			Audit_Report::class,
+		);
+
+		foreach ( $report_classes as $report_class ) {
+			$model = wd_di()->get( $report_class );
+			if ( $model->check_active_status() ) {
+				continue;
+			}
+
+			$changed = false;
+			foreach ( array( 'in_house_recipients', 'out_house_recipients' ) as $group ) {
+				$recipients = 'in_house_recipients' === $group
+					? $model->in_house_recipients
+					: $model->out_house_recipients;
+				if ( ! is_array( $recipients ) ) {
+					continue;
+				}
+
+				foreach ( $recipients as $key => $recipient ) {
+					if ( Notification::USER_SUBSCRIBE_CANCELED !== ( $recipient['status'] ?? '' ) ) {
+						$recipients[ $key ]['status'] = Notification::USER_SUBSCRIBE_CANCELED;
+						$changed                      = true;
+					}
+				}
+
+				if ( 'in_house_recipients' === $group ) {
+					$model->in_house_recipients = $recipients;
+				} else {
+					$model->out_house_recipients = $recipients;
+				}
+			}
+
+			if ( $changed ) {
+				$model->save();
+			}
+		}
+	}
+
+	/**
+	 * Heal recipients that older 6.x versions stored as email-keyed objects instead of arrays,
+	 * which breaks Defender 5 on downgrade.
+	 *
+	 * @return void
+	 */
+	private function fix_notification_recipients_format(): void {
+		$tables = array(
+			wd_di()->get( Audit_Report::class )->get_table(),
+			wd_di()->get( Firewall_Notification::class )->get_table(),
+			wd_di()->get( Firewall_Report::class )->get_table(),
+			wd_di()->get( Malware_Notification::class )->get_table(),
+			wd_di()->get( Malware_Report::class )->get_table(),
+			wd_di()->get( Tweak_Reminder::class )->get_table(),
+		);
+
+		foreach ( $tables as $table ) {
+			$raw = get_site_option( $table );
+			if ( false === $raw ) {
+				continue;
+			}
+
+			$data = is_array( $raw ) ? $raw : json_decode( $raw, true );
+			if ( ! is_array( $data ) ) {
+				continue;
+			}
+
+			$changed = false;
+			foreach ( array( 'in_house_recipients', 'out_house_recipients', 'all_subscribers' ) as $key ) {
+				if ( isset( $data[ $key ] ) && is_array( $data[ $key ] ) ) {
+					// array_values() leaves a proper list untouched but reindexes an email-keyed one.
+					$reindexed = array_values( $data[ $key ] );
+					if ( $reindexed !== $data[ $key ] ) {
+						$data[ $key ] = $reindexed;
+						$changed      = true;
+					}
+				}
+			}
+
+			if ( $changed ) {
+				update_site_option( $table, wp_json_encode( $data ) );
+			}
+		}
+	}
+
+	/**
+	 * Sync all report schedules to match Malware Report.
+	 *
+	 * Since 6.0.0 the UI enforces a single shared schedule for all reports via sync_report_schedule.
+	 * Sites upgrading from older versions may have each report on a different schedule.
+	 * This migration copies Malware_Report's schedule to Scan_Settings (the UI master) and to
+	 * all four report models, then recomputes est_timestamp on each so all report emails
+	 * arrive at the same time.
+	 *
+	 * @return void
+	 */
+	private function sync_all_report_schedules(): void {
+		// Get the schedule from Malware_Report.
+		$malware_report = wd_di()->get( Malware_Report::class );
+		$frequency      = $malware_report->frequency;
+		$day            = $malware_report->day;
+		$day_n          = (int) $malware_report->day_n;
+		$time           = $malware_report->time;
+
+		// Update Scan_Settings so the schedule pill shows the correct label.
+		$scan_settings            = wd_di()->get( Scan_Settings::class );
+		$scan_settings->frequency = $frequency;
+		$scan_settings->day       = $day;
+		$scan_settings->day_n     = $day_n;
+		$scan_settings->time      = $time;
+		$scan_settings->save();
+
+		// Apply the same schedule to all report models and recompute est_timestamp
+		// so every report fires at the same next occurrence.
+		$report_models = array(
+			$malware_report,
+			wd_di()->get( Firewall_Report::class ),
+			wd_di()->get( Audit_Report::class ),
+			wd_di()->get( Tweak_Reminder::class ),
+		);
+
+		foreach ( $report_models as $model ) {
+			$model->frequency = $frequency;
+			$model->day       = $day;
+			$model->day_n     = $day_n;
+			$model->time      = $time;
+
+			$next_run = $model->get_next_run();
+			if ( $next_run instanceof \DateTime ) {
+				$model->est_timestamp = $next_run->getTimestamp();
+			}
+
+			$model->save();
+		}
+
+		// Show a one-time dashboard bubble so users know about the shared schedule.
+		update_site_option( \WP_Defender\Controller\Dashboard::REPORT_SCHEDULE_NOTICE_OPTION, true );
+	}
+
+	/**
+	 * Heal 'Scheduled Scanning' left disabled while its related report stayed active.
+	 *
+	 * The bundled "Basic Config" preset stored 'scheduled_scanning' out of sync with its
+	 * 'report' flag, so applying it left scans disabled. Corrects the live setting and any
+	 * already-stored config presets with the same mismatch.
+	 *
+	 * @return void
+	 */
+	private function fix_scheduled_scanning_left_disabled(): void {
+		$scan_settings  = wd_di()->get( Scan_Settings::class );
+		$malware_report = wd_di()->get( Malware_Report::class );
+		if ( ! $scan_settings->scheduled_scanning && Notification::STATUS_ACTIVE === $malware_report->status ) {
+			$scan_settings->scheduled_scanning = true;
+			$scan_settings->save();
+		}
+
+		$service = wd_di()->get( Backup_Settings::class );
+		$configs = Config_Hub_Helper::get_configs( $service );
+
+		foreach ( $configs as $key => $config ) {
+			$scan = $config['configs']['scan'] ?? null;
+			if ( ! is_array( $scan ) || ! isset( $scan['report'], $scan['scheduled_scanning'] ) ) {
+				continue;
+			}
+
+			if ( 'enabled' === $scan['report'] && false === $scan['scheduled_scanning'] ) {
+				$configs[ $key ]['configs']['scan']['scheduled_scanning'] = true;
+				update_site_option( $key, $configs[ $key ] );
+				Config_Hub_Helper::update_on_hub( $configs[ $key ] );
+			}
+		}
+
+		delete_site_transient( Config_Hub_Helper::CONFIGS_TRANSIENT_KEY );
+	}
+
+	/**
+	 * Clear force_auth_roles when user_roles is empty.
+	 *
+	 * @return void
+	 */
+	private function migrate_two_fa_force_auth_roles(): void {
+		$model = wd_di()->get( Two_Fa_Settings::class );
+		if ( count( $model->user_roles ) === 0 ) {
+			$model->force_auth       = false;
+			$model->force_auth_roles = array();
+			$model->save();
+		}
+	}
+
+	/**
+	 * Migrate the Hardening report (Tweak Reminder) schedule from 5.11 to 6.0.0.
+	 *
+	 * In 5.11, this report was saved with type 'notification' and its frequency was kept in
+	 * `configs['reminder']`. In 6.0.0, it's saved with type 'report' and uses new, dedicated
+	 * fields instead: `frequency`, `day`, `day_n`, `time`, `est_timestamp`.
+	 *
+	 * Without this migration, a site updated from 5.11 keeps the old type 'notification', so the
+	 * new scheduling code can't calculate a valid next-send date and the report email gets sent
+	 * on every cron run instead of on the configured schedule.
+	 *
+	 * @return void
+	 */
+	private function migrate_tweak_reminder_schedule(): void {
+		$model = wd_di()->get( Tweak_Reminder::class );
+		if ( 'notification' !== $model->type ) {
+			return;
+		}
+
+		$model->type = 'report';
+
+		$valid_frequencies = array( 'daily', 'weekly', 'monthly' );
+		$reminder          = $model->configs['reminder'] ?? '';
+		$model->frequency  = in_array( $reminder, $valid_frequencies, true ) ? $reminder : 'weekly';
+
+		if ( null === $model->day || '' === $model->day ) {
+			$model->day = 'sunday';
+		}
+		if ( null === $model->time || '' === $model->time ) {
+			$model->time = '4:00';
+		}
+		if ( ! is_int( $model->day_n ) || $model->day_n < 1 ) {
+			$model->day_n = 1;
+		}
+		// Compute est_timestamp.
+		$next_run = $model->get_next_run();
+		if ( $next_run instanceof \DateTime ) {
+			$model->est_timestamp = $next_run->getTimestamp();
+		}
+		// Clear the old notification style configs key.
+		unset( $model->configs['reminder'] );
+		$model->save();
+	}
+
+	/**
+	 * Update Issues Report email subject and body to match the new copy.
+	 *
+	 * @return void
+	 */
+	private function update_issues_report_email_template(): void {
+		$models = array(
+			wd_di()->get( Malware_Notification::class ),
+			wd_di()->get( Malware_Report::class ),
+		);
+
+		$default_subject = esc_html__( 'Issues Report for {SITE_URL}: {ISSUES_COUNT} issue(s) found.', 'defender-security' );
+		$default_body    = esc_html__(
+			'Hi {USER_NAME},
+
+A scan of {SITE_URL} identified {ISSUES_COUNT} issue(s). The issue(s) found is/are listed below.
+
+{ISSUES_LIST}',
+			'defender-security'
+		);
+
+		foreach ( $models as $model ) {
+			if ( ! isset( $model->configs['template']['found'] ) ) {
+				continue;
+			}
+			$model->configs['template']['found']['subject'] = $default_subject;
+			$model->configs['template']['found']['body']    = $default_body;
+			$model->save();
+		}
 	}
 }

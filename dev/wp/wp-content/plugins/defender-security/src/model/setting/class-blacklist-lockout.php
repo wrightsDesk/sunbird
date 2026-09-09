@@ -103,7 +103,6 @@ class Blacklist_Lockout extends Setting {
 	protected function before_load(): void {
 		$default_values           = $this->get_default_values();
 		$whitelist                = $this->get_list( 'allowlist' );
-		$whitelist                = array_filter( $whitelist );
 		$this->ip_whitelist       = implode( PHP_EOL, $whitelist );
 		$this->ip_lockout_message = $default_values['message'];
 	}
@@ -184,17 +183,41 @@ class Blacklist_Lockout extends Setting {
 		foreach ( $lists as $key => &$collection ) {
 			foreach ( $collection as $i => $v ) {
 				$messages = $this->display_validation_message( $v );
-				if ( ! empty( $messages ) ) {
+				if ( array() !== $messages ) {
 					unset( $collection[ $i ] );
 					$errors = array_merge( $errors, $messages );
 				}
 			}
-			$this->$key = implode( PHP_EOL, array_filter( $collection ) );
+
+			$this->set_list_property( $key, implode( PHP_EOL, array_filter( $collection, 'strlen' ) ) );
 		}
 
-		if ( ! empty( $errors ) ) {
+		if ( array() !== $errors ) {
 			$this->errors[] = esc_html__( 'Invalid IP addresses detected. Please fix the following errors:', 'defender-security' );
 			$this->errors   = array_merge( $this->errors, $errors );
+		}
+	}
+
+	/**
+	 * Set a list property.
+	 *
+	 * @param string $property Property name.
+	 * @param string $value    Property value.
+	 *
+	 * @throws \InvalidArgumentException Invalid property name.
+	 */
+	private function set_list_property( string $property, string $value ): void {
+		switch ( $property ) {
+			case 'ip_blacklist':
+				$this->ip_blacklist = $value;
+				break;
+
+			case 'ip_whitelist':
+				$this->ip_whitelist = $value;
+				break;
+
+			default:
+				throw new \InvalidArgumentException( 'Invalid property name.' );
 		}
 	}
 
@@ -220,7 +243,7 @@ class Blacklist_Lockout extends Setting {
 			$arr
 		);
 
-		return array_filter( $arr );
+		return array_filter( $arr, 'strlen' );
 	}
 
 	/**
@@ -264,7 +287,6 @@ class Blacklist_Lockout extends Setting {
 	 */
 	protected function after_load(): void {
 		if (
-			! empty( $this->geodb_path ) &&
 			is_string( $this->geodb_path ) &&
 			strlen( $this->geodb_path ) > 0
 		) {

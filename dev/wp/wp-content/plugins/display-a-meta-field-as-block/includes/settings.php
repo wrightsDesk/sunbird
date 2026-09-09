@@ -76,6 +76,9 @@ if ( ! class_exists( Settings::class ) ) :
 			// Add the settings page link to plugin list screen.
 			add_action( 'plugin_action_links_' . plugin_basename( MFB_ROOT_FILE ), [ $this, 'plugin_settings_links' ] );
 
+			// Register setting fields.
+			add_action( 'init', [ $this, 'register_setting_fields' ] );
+
 			// Add rest api endpoint to query docs.
 			add_action( 'rest_api_init', [ $this, 'register_docs_endpoint' ] );
 
@@ -115,15 +118,21 @@ if ( ! class_exists( Settings::class ) ) :
 				$right_links = apply_filters( 'meta_field_block_get_header_right_links', $right_links );
 				?>
 				<div class="mfb-settings-header">
-					<h1><strong><?php esc_html_e( $this->plugin_title ); ?></strong> <code><?php esc_html_e( $this->the_plugin_instance->get_plugin_version() ); ?></code></h1>
+					<h1><strong><?php echo esc_html( $this->plugin_title ); ?></strong> <code><?php echo esc_html( $this->the_plugin_instance->get_plugin_version() ); ?></code></h1>
 					<ul class="lelf-links">
 						<?php foreach ( $left_links as $link ) : ?>
-							<?php printf( '<li %5$s><a href="%1$s" target="%3$s"%6$s>%4$s%2$s</a></li>', $link['url'], $link['title'], $link['target'], $link['icon'], $screen->id === $link['id'] ? 'class="is-active"' : '', $link['style'] ?? '' ? ' style="' . $link['style'] . '"' : '' ); ?>
+							<?php
+							// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+							printf( '<li %5$s><a href="%1$s" target="%3$s"%6$s>%4$s%2$s</a></li>', $link['url'], $link['title'], $link['target'], $link['icon'], $screen->id === $link['id'] ? 'class="is-active"' : '', $link['style'] ?? '' ? ' style="' . $link['style'] . '"' : '' );
+							?>
 						<?php endforeach; ?>
 					</ul>
 					<ul class="right-links">
 						<?php foreach ( $right_links as $link ) : ?>
-							<?php printf( '<li><a href="%1$s" target="%3$s">%4$s%2$s</a></li>', $link['url'], $link['title'], $link['target'], $link['icon'] ); ?>
+							<?php
+							// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+							printf( '<li><a href="%1$s" target="%3$s">%4$s%2$s</a></li>', $link['url'], $link['title'], $link['target'], $link['icon'] );
+							?>
 						<?php endforeach; ?>
 					</ul>
 				</div>
@@ -145,7 +154,7 @@ if ( ! class_exists( Settings::class ) ) :
 				function () {
 					?>
 					<div class="wrap">
-						<h2 class="screen-reader-text"><?php esc_html_e( $this->plugin_title ); ?></h2>
+						<h2 class="screen-reader-text"><?php echo esc_html( $this->plugin_title ); ?></h2>
 						<div class="mfb-settings js-mfb-settings-root"></div>
 					</div>
 					<?php
@@ -174,6 +183,9 @@ if ( ! class_exists( Settings::class ) ) :
 					$this->the_plugin_instance->get_script_version( $settings_asset ),
 					true
 				);
+
+				// For debuging.
+				$this->the_plugin_instance->enqueue_debug_information( 'mfb-settings' );
 
 				wp_set_script_translations( 'mfb-settings', 'display-a-meta-field-as-block' );
 
@@ -238,9 +250,27 @@ if ( ! class_exists( Settings::class ) ) :
 		 * @param array $links
 		 * @return array
 		 */
-		public function plugin_settings_links( $links ) : array {
+		public function plugin_settings_links( $links ): array {
 			array_unshift( $links, sprintf( '<a href="%1$s">%2$s</a>', admin_url( $this->first_path ), esc_html__( 'Settings', 'display-a-meta-field-as-block' ) ) );
 			return $links;
+		}
+
+		/**
+		 * Register custom setting fields
+		 *
+		 * @return void
+		 */
+		public function register_setting_fields() {
+			register_setting(
+				'mfb',
+				'mfb_enable_strict_mode',
+				[
+					'type'              => 'boolean',
+					'show_in_rest'      => true,
+					'default'           => false,
+					'sanitize_callback' => 'rest_sanitize_boolean',
+				]
+			);
 		}
 
 		/**
@@ -350,7 +380,7 @@ if ( ! class_exists( Settings::class ) ) :
 			// Get current screen.
 			$current_screen = get_current_screen();
 			if ( $this->hook_suffix === $current_screen->id ) {
-				$footer_text = '<i><strong>' . esc_html__( $this->plugin_title ) . '</strong> <code>' . esc_html__( $this->the_plugin_instance->get_plugin_version() ) . '</code>. Please <a target="_blank" href="https://wordpress.org/support/plugin/display-a-meta-field-as-block/reviews/#new-post" title="Rate the plugin" style="text-decoration:none">rate the plugin <span style="color:#ffb900">★★★★★</span></a> to help us spread the word. Thank you from the <a href="https://metafieldblock.com/?utm_source=Meta+Field+Block&utm_campaign=Meta+Field+Block+visit+site&utm_medium=link&utm_content=footer-text" target="_blank" title="Visit the Plugin website" style="text-decoration:none"><strong>MFB</strong></a> team!</i>';
+				$footer_text = '<i><strong>' . esc_html( $this->plugin_title ) . '</strong> <code>' . esc_html( $this->the_plugin_instance->get_plugin_version() ) . '</code>. Please <a target="_blank" href="https://wordpress.org/support/plugin/display-a-meta-field-as-block/reviews/#new-post" title="Rate the plugin" style="text-decoration:none">rate the plugin <span style="color:#ffb900">★★★★★</span></a> to help us spread the word. Thank you from the <a href="https://metafieldblock.com/?utm_source=Meta+Field+Block&utm_campaign=Meta+Field+Block+visit+site&utm_medium=link&utm_content=footer-text" target="_blank" title="Visit the Plugin website" style="text-decoration:none"><strong>MFB</strong></a> team!</i>';
 			}
 
 			return $footer_text;

@@ -125,7 +125,7 @@ class WP_Wrapper {
 	 * @return bool
 	 */
 	public function delete_transient( $transient ): bool {
-		return delete_transient( $transient );
+		return ! empty( delete_transient( $transient ) );
 	}
 
 	/**

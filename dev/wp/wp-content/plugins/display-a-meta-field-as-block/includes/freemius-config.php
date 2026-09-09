@@ -18,13 +18,6 @@ if ( ! class_exists( FreemiusConfig::class ) ) :
 	 */
 	class FreemiusConfig extends CoreComponent {
 		/**
-		 * The constructor
-		 */
-		public function __construct( $the_plugin_instance ) {
-			parent::__construct( $the_plugin_instance );
-		}
-
-		/**
 		 * Run main hooks
 		 *
 		 * @return void

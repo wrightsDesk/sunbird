@@ -65,7 +65,32 @@ class WOWP_Shortcodes {
 			'attr'   => '',
 		), $atts, 'iframeBox' );
 
-		$iframe = '<iframe width="' . esc_attr( $atts['width'] ) . '" height="' . esc_attr( $atts['height'] ) . '" src="' . esc_url( $atts['link'] ) . '" ' . wp_kses_post( $atts['attr'] ) . '></iframe>';
+		$allowed_attrs = array();
+		if ( ! empty( $atts['attr'] ) ) {
+			preg_match_all( '/(\w+)=["\']?([^"\'>\s]+)["\']?/', $atts['attr'], $matches, PREG_SET_ORDER );
+
+			foreach ( $matches as $match ) {
+				$attr_name = strtolower( $match[1] );
+				$attr_value = $match[2];
+
+				if ( in_array( $attr_name, array( 'title', 'frameborder', 'allowfullscreen', 'loading', 'name', 'class', 'id' ), true ) ) {
+					$allowed_attrs[ $attr_name ] = esc_attr( $attr_value );
+				}
+			}
+		}
+
+		$attr_string = '';
+		foreach ( $allowed_attrs as $name => $value ) {
+			$attr_string .= ' ' . $name . '="' . $value . '"';
+		}
+
+		$iframe = sprintf(
+			'<iframe width="%s" height="%s" src="%s"%s></iframe>',
+			esc_attr( $atts['width'] ),
+			esc_attr( $atts['height'] ),
+			esc_url( $atts['link'] ),
+			$attr_string
+		);
 
 		return $iframe;
 	}

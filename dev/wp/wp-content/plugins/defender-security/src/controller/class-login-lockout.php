@@ -12,6 +12,7 @@ use WP_Defender\Traits\IP;
 use Calotes\Component\Request;
 use Calotes\Component\Response;
 use WP_Defender\Traits\Setting;
+use WP_Defender\Model\Lockout_Log;
 use WP_Defender\Component\Blacklist_Lockout;
 use WP_Defender\Component\Config\Config_Hub_Helper;
 use WP_Defender\Model\Setting\Login_Lockout as Model_Login_Lockout;
@@ -70,7 +71,7 @@ class Login_Lockout extends Event {
 	 */
 	public function save_settings( Request $request ) {
 		$data        = $request->get_data_by_model( $this->model );
-		$old_enabled = (bool) $this->model->enabled;
+		$old_enabled = $this->model->enabled;
 		$prev_data   = $this->model->export();
 
 		$this->model->import( $data );
@@ -118,7 +119,6 @@ class Login_Lockout extends Event {
 		if ( ! $this->is_page_active() ) {
 			return;
 		}
-		wp_localize_script( 'def-iplockout', 'login_lockout', $this->data_frontend() );
 	}
 
 	/**
@@ -131,8 +131,9 @@ class Login_Lockout extends Event {
 			array(
 				'model' => $this->model->export(),
 				'misc'  => array(
-					'host'        => defender_get_hostname(),
-					'module_name' => Model_Login_Lockout::get_module_name(),
+					'host'         => defender_get_hostname(),
+					'module_name'  => Model_Login_Lockout::get_module_name(),
+					'lockouts_24h' => (int) Lockout_Log::count( strtotime( '-24 hours' ), time(), Lockout_Log::AUTH_LOCK ),
 				),
 			),
 			$this->dump_routes_and_nonces()
@@ -191,7 +192,7 @@ class Login_Lockout extends Event {
 	 * @param  array $data  Data to be imported into the model.
 	 */
 	public function import_data( array $data ) {
-		if ( ! empty( $data ) ) {
+		if ( array() !== $data ) {
 			// Upgrade for old versions.
 			$data  = $this->adapt_data( $data );
 			$model = $this->model;

@@ -12,6 +12,7 @@ use WP_Error;
 use stdClass;
 use WP_Defender\Component;
 use WP_Defender\Traits\User;
+use WP_Defender\Integrations\Woocommerce;
 use WP_Defender\Model\Setting\Strong_Password as Settings;
 
 /**
@@ -49,11 +50,26 @@ class Strong_Password extends Component {
 	protected ?Password_Protection $helper;
 
 	/**
+	 * WooCommerce integration instance.
+	 *
+	 * @var Woocommerce|null
+	 */
+	protected ?Woocommerce $woo;
+
+	/**
+	 * Flag to track if cookie has been handled.
+	 *
+	 * @var bool
+	 */
+	private $cookie_handled = false;
+
+	/**
 	 * Constructs the object, setting the model to a Settings instance.
 	 */
 	public function __construct() {
 		$this->model  = wd_di()->get( Settings::class );
 		$this->helper = wd_di()->get( Password_Protection::class );
+		$this->woo    = wd_di()->get( Woocommerce::class );
 	}
 
 	/**
@@ -64,14 +80,14 @@ class Strong_Password extends Component {
 	 *
 	 * @return WP_User|WP_Error WP_User or WP_Error object if a previous callback failed authentication.
 	 */
-	public function during_authentication( $user, $password ) {
+	public function during_core_authentication( $user, $password ) {
 		// Check if the user object is valid.
-		if ( is_wp_error( $user ) || ! $user instanceof WP_User ) {
+		if ( is_wp_error( $user ) ) {
 			return $user;
 		}
 
 		// Check if the password is empty.
-		if ( empty( $password ) ) {
+		if ( '' === $password ) {
 			return new WP_Error(
 				'defender_invalid_password',
 				esc_html__( 'Invalid user data.', 'defender-security' )
@@ -84,7 +100,12 @@ class Strong_Password extends Component {
 		}
 
 		// Check if the user's role requires strong password enforcement.
-		if ( ! $this->should_enforce_for_user( $user ) ) {
+		if ( ! $this->should_enforce_for_user( $user, $this->model ) ) {
+			return $user;
+		}
+
+		// Skip enforcement on WooCommerce requests — dedicated Woo filters handle them based on settings.
+		if ( $this->is_woo_request() ) {
 			return $user;
 		}
 
@@ -164,16 +185,21 @@ class Strong_Password extends Component {
 			$user_obj = null;
 		}
 		// Prevent strong password enforcement for exempt users.
-		if ( isset( $user_obj ) && ! $this->should_enforce_for_user( $user_obj ) ) {
+		if ( isset( $user_obj ) && ! $this->should_enforce_for_user( $user_obj, $this->model ) ) {
 			return;
 		}
 		global $user;
-		if ( isset( $user ) && ! $this->should_enforce_for_user( $user ) ) {
+		if ( isset( $user ) && ! $this->should_enforce_for_user( $user, $this->model ) ) {
 			return;
 		}
 		// Collect all locations.
 		$pages = array( 'profile.php', 'user-new.php', 'user-edit.php', 'wp-login.php' );
+		if ( $this->woo->is_activated() ) {
+			$pages[] = 'index.php';
+		}
+
 		if ( in_array( $hook_suffix, $pages, true ) ) {
+			wp_dequeue_script( 'wc-password-strength-meter' );
 			wp_enqueue_style( 'wd-strong-password', plugins_url( 'assets/css/strong-password.css', WP_DEFENDER_FILE ), array( 'dashicons' ), DEFENDER_VERSION );
 			wp_enqueue_script(
 				'wd-strong-password',
@@ -189,14 +215,17 @@ class Strong_Password extends Component {
 				'wd-strong-password',
 				'wpdef_pws_strings',
 				array(
-					'message'      => esc_html__( 'Hint: Your password must follow the guidelines below.', 'defender-security' ),
-					'requirements' => array(
+					'message'       => esc_html__( 'Hint: Your password must follow the guidelines below.', 'defender-security' ),
+					'requirements'  => array(
 						'length' => esc_html__( 'At least 12 characters', 'defender-security' ),
 						'case'   => esc_html__( 'Uppercase and lowercase letters', 'defender-security' ),
 						'symbol' => esc_html__( 'At least one symbol', 'defender-security' ),
 						'number' => esc_html__( 'At least one number', 'defender-security' ),
 						'zxcvbn' => esc_html__( 'Avoid common words or sequences of letters/numbers', 'defender-security' ),
 					),
+					'woo_locations' => isset( $this->model->forms['woocommerce'] ) && is_array( $this->model->forms['woocommerce'] )
+						? $this->model->forms['woocommerce']
+						: array(),
 				)
 			);
 			add_filter( 'password_hint', '__return_empty_string' );
@@ -213,9 +242,7 @@ class Strong_Password extends Component {
 	public function on_profile_update( $errors, $update, $user ) {
 		if (
 			// If there are already errors with the password, exit.
-			$errors->get_error_message( 'pass' ) ||
-			// If the user object is invalid, exit.
-			is_wp_error( $user ) ||
+			'' !== $errors->get_error_message( 'pass' ) ||
 			// If the user's password is not set, exit.
 			! isset( $user->user_pass )
 		) {
@@ -223,14 +250,14 @@ class Strong_Password extends Component {
 		}
 
 		// When updating the profile check if user's role preference is enabled.
-		if ( ! $this->should_enforce_for_user( $user ) ) {
+		if ( ! $this->should_enforce_for_user( $user, $this->model ) ) {
 			return;
 		}
 
 		$login_password = $this->helper->get_submitted_password();
 
 		// Check if the submitted password is weak.
-		if ( isset( $login_password ) && $this->is_weak_password( $login_password ) ) {
+		if ( '' !== $login_password && $this->is_weak_password( $login_password ) ) {
 			$errors->add( self::CODE, $this->model->get_message() );
 		}
 	}
@@ -238,15 +265,20 @@ class Strong_Password extends Component {
 	/**
 	 * Validate password during password reset.
 	 *
-	 * @param WP_Error $errors WP_Error object.
-	 * @param WP_User  $user WP_User object.
+	 * @param WP_Error     $errors WP_Error object.
+	 * @param WP_User|null $user WP_User object.
 	 */
-	public function on_password_reset( $errors, $user ) {
-		if ( is_wp_error( $user ) ) {
+	public function on_password_reset( $errors, $user = null ) {
+		if ( null === $user ) {
 			return;
 		}
 
-		if ( ! $this->should_enforce_for_user( $user ) ) {
+		if ( ! $this->should_enforce_for_user( $user, $this->model ) ) {
+			return;
+		}
+
+		// WooCommerce also fires this core hook — gate on the lost-password form setting.
+		if ( $this->is_woo_request() && ! $this->is_woo_form_enabled( Woocommerce::WOO_LOST_PASSWORD_FORM ) ) {
 			return;
 		}
 
@@ -254,17 +286,22 @@ class Strong_Password extends Component {
 		$cookie_value = isset( $_COOKIE[ self::COOKIE_KEY ] ) ? sanitize_text_field( wp_unslash( $_COOKIE[ self::COOKIE_KEY ] ) ) : '';
 
 		// If the cookie is set, show the warning message.
-		if ( ! empty( $cookie_value ) ) {
+		if ( '' !== $cookie_value ) {
 			$errors->add( self::CODE, $this->model->get_message() );
 
 			// Remove the cookie.
 			$this->helper->remove_cookie_notice( self::COOKIE_KEY );
+			$this->cookie_handled = true;
 		}
 
 		$submitted_password = $this->helper->get_submitted_password();
 
 		// Check if the submitted password is weak.
-		if ( ! empty( $submitted_password ) && $this->is_weak_password( $submitted_password ) ) {
+		if (
+			'' !== $submitted_password &&
+			$this->is_weak_password( $submitted_password ) &&
+			! in_array( self::CODE, $errors->get_error_codes(), true )
+		) {
 			$errors->add( self::CODE, $this->model->get_message() );
 		}
 	}
@@ -302,5 +339,143 @@ class Strong_Password extends Component {
 
 		// Shuffle the password to prevent predictable character order.
 		return str_shuffle( $password );
+	}
+
+	/**
+	 * Add WooCommerce error message for password reset warnings.
+	 *
+	 * @param  string $wc_message  WooCommerce default error message.
+	 * @return string              WooCommerce error message.
+	 */
+	public function add_woocommerce_error_message( $wc_message ) {
+		if ( ! isset( $this->model->forms['woocommerce'] ) ) {
+			return $wc_message;
+		}
+
+		if ( isset( $_COOKIE[ self::COOKIE_KEY ] ) && function_exists( 'wc_print_notice' ) && ! $this->cookie_handled ) {
+			$message = $this->model->get_message();
+			wc_print_notice( $message, 'error' );
+			$this->helper->remove_cookie_notice( self::COOKIE_KEY );
+		}
+		return $wc_message;
+	}
+
+	/**
+	 * Validate password strength during WooCommerce checkout registration.
+	 *
+	 * @param WP_Error $errors Error object.
+	 *
+	 * @return WP_Error Modified error object.
+	 */
+	public function during_woo_registration( $errors ) {
+		if ( ! isset( $this->model->forms['woocommerce'] ) || ! is_array( $this->model->forms['woocommerce'] ) || ! in_array( Woocommerce::WOO_REGISTER_FORM, $this->model->forms['woocommerce'], true ) ) {
+			return $errors;
+		}
+
+		$password = $this->helper->get_submitted_password();
+
+		if (
+			'' !== $password &&
+			$this->is_weak_password( $password ) &&
+			! in_array( self::CODE, $errors->get_error_codes(), true )
+		) {
+			$errors->add( self::CODE, $this->model->get_message() );
+		}
+
+		return $errors;
+	}
+
+	/**
+	 * Validate password strength during WooCommerce account details save.
+	 *
+	 * @param WP_Error         $errors WP_Error object.
+	 * @param WP_User|stdClass $user User object.
+	 */
+	public function on_woo_account_update( $errors, $user ) {
+		if ( ! $user instanceof stdClass || ! isset( $user->user_pass ) ) {
+			return;
+		}
+
+		if ( ! $this->should_enforce_for_user( $user, $this->model ) ) {
+			return;
+		}
+
+		if ( ! isset( $this->model->forms['woocommerce'] ) || ! is_array( $this->model->forms['woocommerce'] ) ) {
+			return;
+		}
+
+		$password = $this->helper->get_submitted_password();
+
+		if (
+			'' !== $password &&
+			$this->is_weak_password( $password ) &&
+			! in_array( self::CODE, $errors->get_error_codes(), true )
+		) {
+			$errors->add( self::CODE, $this->model->get_message() );
+		}
+	}
+
+	/**
+	 * Validate password strength during WooCommerce login.
+	 *
+	 * @param WP_Error $validation_error WP_Error object to collect validation errors.
+	 * @param string   $username User login name.
+	 * @param string   $password User password.
+	 *
+	 * @return WP_User|WP_Error WP_User or WP_Error object with any validation errors added.
+	 */
+	public function during_woo_authentication( $validation_error, $username, $password ) {
+		if ( '' === $password ) {
+			return $validation_error;
+		}
+
+		if ( $this->is_woo_request() && ! $this->is_woo_form_enabled( Woocommerce::WOO_LOGIN_FORM ) ) {
+			return $validation_error;
+		}
+		$user = get_user_by( 'login', $username );
+		if ( ! $user ) {
+			$user = get_user_by( 'email', $username );
+		}
+
+		if ( ! $user ) {
+			return $validation_error;
+		}
+
+		if ( ! $this->should_enforce_for_user( $user, $this->model ) ) {
+			return $validation_error;
+		}
+
+		if ( ! wp_check_password( $password, $user->user_pass, $user->ID ) ) {
+			return $validation_error;
+		}
+
+		if ( $this->is_weak_password( $password ) ) {
+			$this->helper->trigger_redirect( $user, self::CODE, self::COOKIE_KEY );
+			exit;
+		}
+
+		return $validation_error;
+	}
+
+	/**
+	 * Determine if current request is coming from WooCommerce flows.
+	 */
+	private function is_woo_request(): bool {
+		return $this->woo->is_activated() && $this->woo->is_wc_login_context();
+	}
+
+	/**
+	 * Check whether a specific WooCommerce form is enabled in settings.
+	 *
+	 * @param string $form Form slug.
+	 */
+	private function is_woo_form_enabled( string $form ): bool {
+		if ( ! isset( $this->model->plugins['woocommerce'] ) || ! $this->model->plugins['woocommerce'] ) {
+			return false;
+		}
+
+		$forms = $this->model->forms['woocommerce'] ?? array();
+
+		return in_array( $form, $forms, true );
 	}
 }

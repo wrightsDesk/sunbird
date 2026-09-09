@@ -5,8 +5,8 @@
 		// Display reCaptcha for plugin`s block. Also check if elements exists when loaded via lazy loading.
 		var tryReCaptchaCounter = 0,
 			wpdefRecaptchaTimer = setInterval( function() {
-				if ( $( '.wpdef_recaptcha_v2_checkbox, .wpdef_recaptcha_v2_invisible' ).length > 0 ) {
-					$( '.wpdef_recaptcha_v2_checkbox, .wpdef_recaptcha_v2_invisible' ).each( function() {
+				if ( $( '.wpdef_captcha_v2_checkbox, .wpdef_captcha_v2_invisible' ).length > 0 ) {
+					$( '.wpdef_captcha_v2_checkbox, .wpdef_captcha_v2_invisible' ).each( function() {
 						var container = $( this ).find( '.wpdef_recaptcha' );
 
 						if (
@@ -175,7 +175,7 @@
 		}
 
 		var grecaptcha_version = WPDEF.options.version;
-		
+
 		if ( 'v2_checkbox' == grecaptcha_version ) {
 			var parameters = params ? params : { 'sitekey' : WPDEF.options.sitekey, 'theme' : WPDEF.options.theme, 'size' : WPDEF.options.size },
 				block = $( '#' + container ),
@@ -205,19 +205,9 @@
 				// Callback function works only in frontend.
 				if ( ! $( 'body' ).hasClass( 'wp-admin' ) ) {
 					parameters['callback'] = function( token ) {
-						form.off();
-						restoreEvents( form );
-						form.find( 'button, input:submit' ).off().each( function() {
-							restoreEvents( $( this ) );
-						} );
 						if ( targetObject && targetEvent ) {
 							targetObject.trigger( targetEvent );
 						}
-						form.find( 'button, input:submit' ).each( function() {
-							storeEvents( $( this ) );
-						} );
-						storeEvents( form );
-						storeOnSubmit( form, grecaptcha_index );
 						grecaptcha.reset( grecaptcha_index );
 					};
 				}

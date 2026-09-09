@@ -47,7 +47,9 @@ trait User {
 	 * @since 2.7.0
 	 */
 	protected function is_hub_request(): bool {
-		return ! empty( defender_get_data_from_request( 'wpmudev-hub', 'g' ) );
+		$data = defender_get_data_from_request( 'wpmudev-hub', 'g' );
+
+		return null !== $data && '' !== $data;
 	}
 
 	/**
@@ -100,7 +102,7 @@ trait User {
 	 *
 	 * @param  null|int $user_id  User ID.
 	 *
-	 * @return array|null
+	 * @return string|null
 	 */
 	public function get_current_user_role( $user_id = null ) {
 		$user = $this->get_user( $user_id );
@@ -108,7 +110,7 @@ trait User {
 			return null;
 		}
 
-		return empty( $user->roles ) ? null : ucfirst( array_shift( $user->roles ) );
+		return isset( $user->roles[0] ) ? ucfirst( $user->roles[0] ) : null;
 	}
 
 	/**
@@ -120,8 +122,8 @@ trait User {
 	 */
 	public function get_first_user_role( $user ) {
 		$role = '';
-		if ( ! empty( $user->roles ) && is_array( $user->roles ) ) {
-			$role = ucfirst( array_shift( $user->roles ) );
+		if ( isset( $user->roles[0] ) ) {
+			$role = ucfirst( $user->roles[0] );
 		}
 
 		return $role;
@@ -147,7 +149,7 @@ trait User {
 		} else {
 			$cache = Array_Cache::get( $user_id, 'user' );
 			if ( null !== $cache ) {
-				if ( empty( $cache->roles ) ) {
+				if ( ! isset( $cache->roles ) || ! is_array( $cache->roles ) || 0 === count( $cache->roles ) ) {
 					$cache_roles = Array_Cache::get( 'roles_' . $user_id, 'user' );
 					if ( null !== $cache_roles ) {
 						$cache->roles = $cache_roles;
@@ -199,7 +201,7 @@ trait User {
 	 * @since 3.2.0
 	 */
 	public function get_roles( WP_User $user ): array {
-		$user_roles = (array) $user->roles;
+		$user_roles = $user->roles;
 
 		// If user is super admin.
 		if ( is_multisite() && is_super_admin( $user->ID ) && ! in_array(
@@ -242,37 +244,40 @@ trait User {
 	 * @return bool
 	 */
 	public function is_admin( $user ): bool {
-		if ( $user ) {
-			if ( is_multisite() ) {
-				if ( user_can( $user, 'manage_network' ) ) {
-					return true;
-				}
-			} elseif ( user_can( $user, 'manage_options' ) ) {
-				return true;
-			}
+		if ( is_int( $user ) ) {
+			$user = get_userdata( $user );
 		}
 
-		return false;
+		if ( ! $user instanceof WP_User ) {
+			return false;
+		}
+
+		if ( is_multisite() ) {
+			return user_can( $user, 'manage_network' );
+		}
+
+		return user_can( $user, 'manage_options' );
 	}
 
 	/**
 	 * Check if the user has a role selected by the admin.
 	 *
-	 * @param WP_User|stdClass $user User object.
+	 * @param WP_User|\stdClass $user User object.
+	 * @param object            $model Model object.
 	 *
 	 * @return bool True if the user has a selected role, false otherwise.
 	 */
-	private function should_enforce_for_user( $user ): bool {
+	private function should_enforce_for_user( $user, $model ): bool {
 		$roles = array();
 		if ( ! is_multisite() ) {
 			if ( $user instanceof WP_User ) {
 				$roles = $this->get_roles( $user );
-			} elseif ( empty( $roles ) && $user instanceof stdClass && ! empty( $user->ID ) ) {
+			} elseif ( isset( $user->ID ) && $user->ID ) {
 				$user  = get_userdata( $user->ID );
 				$roles = $user->roles;
-			} elseif ( empty( $roles ) ) {
+			} else {
 				$role = defender_get_data_from_request( 'role', 'p' );
-				if ( ! empty( $role ) ) {
+				if ( null !== $role && '' !== $role ) {
 					$roles = array( $role );
 				}
 			}
@@ -285,25 +290,13 @@ trait User {
 			}
 		}
 
-		$user_roles = $this->get_user_roles_property();
+		$user_roles = array();
+		if ( is_object( $model ) && property_exists( $model, 'user_roles' ) ) {
+			$user_roles = $model->user_roles;
+		}
 
 		$array_intersect = array_intersect( $user_roles, $roles );
 
-		return ! empty( $array_intersect );
-	}
-
-	/**
-	 * Retrieve the user roles property dynamically.
-	 *
-	 * @return array The user roles from the appropriate property.
-	 */
-	private function get_user_roles_property(): array {
-		if ( isset( $this->model ) && property_exists( $this->model, 'user_roles' ) ) {
-			return $this->model->user_roles;
-		} elseif ( isset( $this->settings ) && property_exists( $this->settings, 'user_roles' ) ) {
-			return $this->settings->user_roles;
-		}
-
-		return array();
+		return array() !== $array_intersect;
 	}
 }

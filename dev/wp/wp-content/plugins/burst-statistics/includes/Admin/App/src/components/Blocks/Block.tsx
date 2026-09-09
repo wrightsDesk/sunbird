@@ -1,0 +1,26 @@
+import clsx from 'clsx';
+import ErrorBoundary from '../Common/ErrorBoundary';
+import { memo } from 'react';
+
+type BlockProps = React.ComponentPropsWithoutRef<'div'> & {
+	className?: string;
+	children: React.ReactNode;
+};
+
+export const Block = memo( ({ className = '', children, ...props }: BlockProps ) => {
+	return (
+		<ErrorBoundary>
+			<div
+				className={clsx(
+					'col-span-12 flex flex-col rounded-xl bg-white shadow-xs relative border dark:border-gray-100 border-gray-200 @container',
+					className // later so should override the above
+				)}
+				{...props}
+			>
+				{children}
+			</div>
+		</ErrorBoundary>
+	);
+});
+
+Block.displayName = 'Block';

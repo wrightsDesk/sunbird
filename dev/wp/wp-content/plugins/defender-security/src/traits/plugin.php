@@ -8,7 +8,8 @@
 namespace WP_Defender\Traits;
 
 use WP_Error;
-use WP_Defender\Component\Quarantine as Quarantine_Component;
+use WP_Defender\Model\Scan_Item;
+use WP_Filesystem_Base;
 
 trait Plugin {
 
@@ -55,31 +56,115 @@ trait Plugin {
 	}
 
 	/**
+	 * Get plugin slug.
+	 *
+	 * @param string $main_plugin_file The main plugin file name.
+	 *
+	 * @return string Plugin dir name, e.g. 'plugin-test', or a file name with the extension if this is a single plugin file, e.g. 'plugin-test.php'.
+	 */
+	public function get_plugin_slug_by( string $main_plugin_file ): string {
+		$dir = dirname( $main_plugin_file );
+		if ( '.' === $dir ) {
+			// If this is a single plugin file in the plugin root, take the file name.
+			$slug = explode( '/', $main_plugin_file );
+			$slug = array_shift( $slug );
+		} else {
+			$slug = $dir;
+		}
+
+		return $slug;
+	}
+
+	/**
 	 * Get all slugs.
 	 *
 	 * @return array
 	 */
 	public function get_plugin_slugs(): array {
 		$slugs = array();
-		foreach ( $this->get_plugins() as $slug => $plugin ) {
-			$base_slug = explode( '/', $slug );
-			$slugs[]   = array_shift( $base_slug );
+		foreach ( $this->get_plugins() as $main_plugin_file => $plugin ) {
+			$slugs[] = $this->get_plugin_slug_by( $main_plugin_file );
 		}
 
 		return $slugs;
 	}
 
 	/**
-	 * Retrieve plugin base directory.
+	 * Get plugin details by given slug.
 	 *
-	 * @return string
+	 * @param string $plugin_slug The plugin slug.
+	 *
+	 * @return array
 	 */
-	public function get_plugin_base_dir(): string {
-		if ( defined( 'WP_PLUGIN_DIR' ) ) {
-			return wp_normalize_path( WP_PLUGIN_DIR . '/' );
+	public function get_plugin_details_by( string $plugin_slug ): array {
+		foreach ( $this->get_plugins() as $main_plugin_file => $plugin_data ) {
+			if ( $this->get_plugin_slug_by( $main_plugin_file ) === $plugin_slug ) {
+				$plugin_data['slug'] = $plugin_slug;
+
+				return $plugin_data;
+			}
 		}
 
-		return wp_normalize_path( WP_CONTENT_DIR . '/plugins/' );
+		return array();
+	}
+
+	/**
+	 * Check if a plugin exists on WordPress.org repository by slug.
+	 *
+	 * @param string $slug The plugin slug.
+	 *
+	 * @return array|WP_Error
+	 */
+	public function ping_wp_org_by_plugin_slug( string $slug ) {
+		$url       = 'https://api.wordpress.org/plugins/info/1.0/' . $slug . '.json';
+		$http_args = array(
+			'timeout'    => 15,
+			'sslverify'  => true,
+			'user-agent' => defender_get_own_user_agent(),
+		);
+
+		return wp_remote_get( $url, $http_args );
+	}
+
+	/**
+	 * Handle a response from wp.org by the plugin slug.
+	 *
+	 * @param string $slug The plugin slug.
+	 *
+	 * @return array
+	 */
+	public function handle_wp_org_response_by( string $slug ): array {
+		$default_error = esc_html__( 'Plugin unknown error.', 'defender-security' );
+		$response      = $this->ping_wp_org_by_plugin_slug( $slug );
+		if ( is_wp_error( $response ) ) {
+			return array(
+				'message' => $default_error,
+				'success' => false,
+			);
+		}
+
+		$results = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( ! is_array( $results ) ) {
+			return array(
+				'message' => esc_html__( 'Plugin response is not in expected format.', 'defender-security' ),
+				'success' => false,
+			);
+		}
+		// Sometimes wp.org can return 404th response code for an existed plugin but with 'closed' status.
+		if ( 200 !== wp_remote_retrieve_response_code( $response )
+			&& isset( $results['error'] ) && 'closed' !== $results['error']
+		) {
+			return array(
+				'message' => $results['description'] ?? $results['error'],
+				'success' => false,
+			);
+		}
+
+		return array(
+			'success' => true,
+			'message' => '',
+			'body'    => $results,
+		);
 	}
 
 	/**
@@ -89,8 +174,7 @@ trait Plugin {
 	 *
 	 * @return array Index message: describes what happened.
 	 *               Index data: Plugin data from wp.org.
-	 *               Index success: true if plugin in WordPress plugin repository
-	 *               else false.
+	 *               Index success: true if plugin in WordPress plugin repository, else false.
 	 */
 	public function check_plugin_on_wp_org( string $slug ): array {
 		// Check if data exists in transient.
@@ -103,40 +187,9 @@ trait Plugin {
 			);
 		}
 
-		$url       = 'https://api.wordpress.org/plugins/info/1.0/' . $slug . '.json';
-		$http_args = array(
-			'timeout'    => 15,
-			'sslverify'  => false, // Many hosts have no updated CA bundle.
-			'user-agent' => 'Defender/' . DEFENDER_VERSION,
-		);
-		$response  = wp_remote_get( $url, $http_args );
-
-		if ( is_wp_error( $response ) || 200 !== wp_remote_retrieve_response_code( $response ) ) {
-			$body_json = json_decode( wp_remote_retrieve_body( $response ), true );
-
-			$message = esc_html__( 'Plugin unknown error.', 'defender-security' );
-			if ( is_array( $body_json ) && isset( $body_json['error'] ) ) {
-				$message = $body_json['error'];
-			}
-
-			return array(
-				'message' => $message,
-				'success' => false,
-			);
-		}
-
-		$results = json_decode( wp_remote_retrieve_body( $response ), true );
-		if ( ! is_array( $results ) ) {
-			return array(
-				'message' => esc_html__( 'Plugin response is not in expected format.', 'defender-security' ),
-				'success' => false,
-			);
-		}
-		if ( ! empty( $results['closed'] ) ) {
-			return array(
-				'message' => $response['description'],
-				'success' => false,
-			);
+		$results = $this->handle_wp_org_response_by( $slug );
+		if ( ! $results['success'] ) {
+			return $results;
 		}
 		// Cache the relevant data in the transient.
 		$filtered_results   = array_intersect_key( $results, array_flip( array( 'homepage', 'version', 'author' ) ) );
@@ -152,21 +205,21 @@ trait Plugin {
 
 	/**
 	 * Check for readme.txt or readme.md files.
-	 * Sometimes plugins from wp.org don't have readme.txt file, e.g. 'wp-crontrol'.
+	 * Sometimes plugins from wp.org don't have readme.txt file.
 	 *
-	 * @param string $readme_file Path to readme.* file.
+	 * @param string $readme_file_path Path to readme.* file.
 	 *
 	 * @return bool
 	 */
-	public function check_by_readme_file( $readme_file ): bool {
-		if ( file_exists( $readme_file ) && is_readable( $readme_file ) ) {
+	public function check_by_readme_file( string $readme_file_path ): bool {
+		if ( file_exists( $readme_file_path ) && is_readable( $readme_file_path ) ) {
 			global $wp_filesystem;
 			// Initialize the WP filesystem, no more using 'file-put-contents' function.
-			if ( empty( $wp_filesystem ) ) {
+			if ( ! $wp_filesystem instanceof WP_Filesystem_Base ) {
 				require_once ABSPATH . '/wp-admin/includes/file.php';
 				WP_Filesystem();
 			}
-			$contents = trim( (string) $wp_filesystem->get_contents( $readme_file ) );
+			$contents = trim( (string) $wp_filesystem->get_contents( $readme_file_path ) );
 
 			if ( false !== strpos( $contents, '===' ) ) {
 				return true;
@@ -183,13 +236,13 @@ trait Plugin {
 	/**
 	 * Is this plugin likely to be a WordPress.org plugin?
 	 *
-	 * @param string|null $slug of the plugin.
+	 * @param string|null $slug Plugin directory name.
 	 *
 	 * @return bool Return true if likely, else false.
 	 */
 	public function is_likely_wporg_slug( ?string $slug ): bool {
 		// Ensure slug is valid.
-		if ( empty( $slug ) || ! is_string( $slug ) ) {
+		if ( ! is_string( $slug ) || '' === $slug ) {
 			return false;
 		}
 		// Check if data exists in transient.
@@ -200,25 +253,32 @@ trait Plugin {
 		if ( isset( $transient[ $slug ] ) ) {
 			return $transient[ $slug ];
 		}
+		// Criterion #1: Check if plugin name contains 'Pro' mention.
+		$actioned_plugins = get_site_option( \WP_Defender\Component\Scan::PLUGINS_ACTIONED );
+		if ( is_array( $actioned_plugins ) && isset( $actioned_plugins[ $slug ] )
+			&& preg_match( '/ Pro$/i', $actioned_plugins[ $slug ]['Name'] )
+		) {
+			return false;
+		}
 
-		$plugin_path  = $this->get_plugin_base_dir() . $slug . '/';
+		$plugin_path = $this->get_abs_plugin_path_by_slug( $slug ) . DIRECTORY_SEPARATOR;
+		// Some plugins do not follow the readme file naming rule. Let's list the possible names.
 		$readme_files = array(
 			'readme.txt',
+			'README.txt',
 			'readme.md',
 			'README.md',
 		);
-		// Check each Readme-case.
+		// Criterion #2: Check if there is Readme file.
 		foreach ( $readme_files as $readme_file ) {
 			if ( $this->check_by_readme_file( $plugin_path . $readme_file ) ) {
 				$transient[ $slug ] = true;
+				// Collect plugin slugs that are on wp.org.
 				set_site_transient( self::$org_slugs, $transient, DAY_IN_SECONDS );
 
 				return true;
 			}
 		}
-
-		$transient[ $slug ] = false;
-		set_site_transient( self::$org_slugs, $transient, DAY_IN_SECONDS );
 
 		return false;
 	}
@@ -232,7 +292,7 @@ trait Plugin {
 	 */
 	public function is_active_plugin( $file_path ): bool {
 		$path_data = explode( DIRECTORY_SEPARATOR, plugin_basename( $file_path ) );
-		if ( ! empty( $path_data[0] ) ) {
+		if ( '' !== $path_data[0] ) {
 			$plugin_slug = $path_data[0];
 		} else {
 			return false;
@@ -287,6 +347,21 @@ trait Plugin {
 		strtok( $normalized_path, '/' );
 		// Now fetch the next token, if available, otherwise return an empty string.
 		return (string) strtok( '' );
+	}
+
+	/**
+	 * Get plugin absolute path.
+	 *
+	 * @param string $slug Plugin slug.
+	 *
+	 * @return string
+	 */
+	public function get_abs_plugin_path_by_slug( string $slug = '' ): string {
+		if ( defined( 'WP_PLUGIN_DIR' ) ) {
+			return wp_normalize_path( WP_PLUGIN_DIR ) . DIRECTORY_SEPARATOR . $slug;
+		}
+
+		return wp_normalize_path( WP_CONTENT_DIR ) . DIRECTORY_SEPARATOR . 'plugins' . DIRECTORY_SEPARATOR . $slug;
 	}
 
 	/**
@@ -376,7 +451,7 @@ trait Plugin {
 	private function get_url_content( $url ) {
 		global $wp_filesystem;
 		// Initialize the WP filesystem, no more using 'file-put-contents' function.
-		if ( empty( $wp_filesystem ) ) {
+		if ( ! $wp_filesystem instanceof WP_Filesystem_Base ) {
 			require_once ABSPATH . '/wp-admin/includes/file.php';
 			WP_Filesystem();
 		}
@@ -399,21 +474,15 @@ trait Plugin {
 	/**
 	 * Quarantine a plugin.
 	 *
-	 * @param string $parent_action  Parent action.
+	 * @param string    $parent_action  Parent action.
+	 * @param Scan_Item $scan_item      Scan item model object.
 	 *
 	 * @return array|WP_Error
 	 */
-	public function quarantine( string $parent_action ) {
-		if ( ! class_exists( 'WP_Defender\Controller\Quarantine' ) ) {
-			return new WP_Error(
-				'DEFENDER_PRO_ONLY_FEATURE',
-				defender_quarantine_pro_only()
-			);
-		}
+	public function quarantine( string $parent_action, Scan_Item $scan_item ) {
+		$quarantine_component = wd_di()->get( \WP_Defender\Component\Quarantine::class );
 
-		$quarantine_component = wd_di()->get( Quarantine_Component::class );
-
-		return $quarantine_component->quarantine_file( $this->owner, $parent_action );
+		return $quarantine_component->quarantine_file( $scan_item, $parent_action );
 	}
 
 	/**
@@ -428,6 +497,127 @@ trait Plugin {
 			$this->get_plugin_directory_name(
 				$file_path
 			)
+		);
+	}
+
+	/**
+	 * Get a list of the active plugins.
+	 *
+	 * @return array
+	 */
+	private function get_active_and_valid_plugin_files(): array {
+		$active_plugins = is_multisite() ? wp_get_active_network_plugins() : array();
+		$active_plugins = array_merge( $active_plugins, wp_get_active_and_valid_plugins() );
+
+		return array_unique( $active_plugins );
+	}
+
+	/**
+	 * Get a plugin name.
+	 *
+	 * @param string $plugin_file Absolute path to the main plugin file.
+	 *
+	 * @return string
+	 */
+	private function get_plugin_name( $plugin_file ): string {
+		$plugin_data = get_plugin_data( $plugin_file );
+
+		return isset( $plugin_data['Name'] ) ? $plugin_data['Name'] : '';
+	}
+
+	/**
+	 * Get active plugin names.
+	 *
+	 * @return array
+	 */
+	public function get_active_plugin_names(): array {
+		$active_plugins = $this->get_active_and_valid_plugin_files();
+		$plugin_names   = array();
+
+		// Convert paths to names.
+		foreach ( $active_plugins as $plugin_file ) {
+			$plugin_name = $this->get_plugin_name( $plugin_file );
+			if ( '' !== $plugin_name ) {
+				$plugin_names[] = $plugin_name;
+			}
+		}
+
+		return $plugin_names;
+	}
+
+	/**
+	 * Data for the “update Defender” notification bubble (React).
+	 *
+	 * Uses the update_plugins site transient (WordPress.org for Free; WPMU DEV Dashboard merges
+	 * Pro updates into the same transient when that plugin is active).
+	 *
+	 * @return array{
+	 *     available:bool,
+	 *     newVersion:string,
+	 *     learnMoreUrl:string,
+	 *     updateUrl:string,
+	 *     canUpdate:bool,
+	 *     currentVersion:string,
+	 *     releaseDate:string
+	 * }
+	 */
+	public function get_plugin_update_notice_data(): array {
+		$basename = DEFENDER_PLUGIN_BASENAME;
+
+		$default_learn_more = defender_is_wp_org_version()
+			? 'https://wordpress.org/plugins/defender-security/'
+			: 'https://wpmudev.com/project/wp-defender/#changelog_all';
+
+		$learn_more_url = $default_learn_more;
+		$new_version    = '';
+		$has_update     = false;
+
+		$updates = get_site_transient( 'update_plugins' );
+		if ( is_object( $updates ) && isset( $updates->response[ $basename ] ) ) {
+			$pkg = $updates->response[ $basename ];
+			if ( is_object( $pkg ) ) {
+				$has_update  = true;
+				$new_version = isset( $pkg->new_version ) ? (string) $pkg->new_version : '';
+				if ( isset( $pkg->url ) && is_string( $pkg->url ) && '' !== $pkg->url ) {
+					$learn_more_url = $pkg->url;
+				}
+			} elseif ( is_array( $pkg ) ) {
+				$has_update  = true;
+				$new_version = isset( $pkg['new_version'] ) ? (string) $pkg['new_version'] : '';
+				if ( isset( $pkg['url'] ) && is_string( $pkg['url'] ) && '' !== $pkg['url'] ) {
+					$learn_more_url = $pkg['url'];
+				}
+			}
+		}
+
+		$can_update = $has_update && current_user_can( 'update_plugins' );
+		$update_url = '';
+		if ( $can_update ) {
+			// Build a plain URL for wp_localize_script (wp_nonce_url() HTML-escapes and breaks JSON).
+			$update_url = add_query_arg(
+				array(
+					'_wpnonce' => wp_create_nonce( 'upgrade-plugin_' . $basename ),
+					'action'   => 'upgrade-plugin',
+					'plugin'   => $basename,
+				),
+				self_admin_url( 'update.php' )
+			);
+		}
+
+		$release_date_raw = defined( 'DEFENDER_RELEASE_DATE' ) ? DEFENDER_RELEASE_DATE : '';
+		$timestamp        = strtotime( $release_date_raw );
+		$release_date     = false !== $timestamp
+			? date_i18n( get_option( 'date_format' ), $timestamp )
+			: '';
+
+		return array(
+			'available'      => $has_update,
+			'newVersion'     => $new_version,
+			'learnMoreUrl'   => esc_url_raw( $learn_more_url ),
+			'updateUrl'      => esc_url_raw( $update_url ),
+			'canUpdate'      => $can_update && '' !== $update_url,
+			'currentVersion' => DEFENDER_VERSION,
+			'releaseDate'    => $release_date,
 		);
 	}
 }

@@ -11,6 +11,7 @@ use RecursiveIteratorIterator;
 use RecursiveDirectoryIterator;
 use WP_Defender\Helper\File as File_Helper;
 use WP_Defender\Component\Logger\Rotation_Logger as Logger;
+use WP_Filesystem_Base;
 
 trait IO {
 
@@ -25,7 +26,7 @@ trait IO {
 	protected function get_tmp_path( bool $main_site_path = false ): string {
 		global $wp_filesystem;
 		// Initialize the WP filesystem, no more using 'file-put-contents' function.
-		if ( empty( $wp_filesystem ) ) {
+		if ( ! $wp_filesystem instanceof WP_Filesystem_Base ) {
 			require_once ABSPATH . '/wp-admin/includes/file.php';
 			WP_Filesystem();
 		}
@@ -65,7 +66,7 @@ trait IO {
 	 * @return string The path to the log file.
 	 */
 	public function get_log_path( $category = '' ): string {
-		$file = empty( $category ) ? wd_internal_log() : $category;
+		$file = '' === $category ? wd_internal_log() : $category;
 
 		$logger    = new Logger();
 		$file_name = $logger->generate_file_name( $file );
@@ -92,7 +93,7 @@ trait IO {
 	public function delete_dir( $dir ): bool {
 		global $wp_filesystem;
 		// Initialize the WP filesystem, no more using 'file-put-contents' function.
-		if ( empty( $wp_filesystem ) ) {
+		if ( ! $wp_filesystem instanceof WP_Filesystem_Base ) {
 			require_once ABSPATH . '/wp-admin/includes/file.php';
 			WP_Filesystem();
 		}
@@ -150,7 +151,8 @@ trait IO {
 	 * @return bool
 	 */
 	protected function compare_hashes_on_different_os( $file_path, $file_hash ) {
-		if ( hash_equals( md5_file( $file_path ), $file_hash ) ) {
+		$hashed_file = md5_file( $file_path );
+		if ( false !== $hashed_file && hash_equals( $hashed_file, $file_hash ) ) {
 			return true;
 		}
 		if ( hash_equals( $this->hash_file( $file_path, 'linux' ), $file_hash ) ) {
@@ -177,7 +179,7 @@ trait IO {
 		} elseif ( is_array( $file_hash ) ) {
 			// Sometimes file has some hashes.
 			foreach ( $file_hash as $hash_value ) {
-				if ( $this->compare_hashes_on_different_os( $file_path, $hash_value ) ) {
+				if ( is_string( $hash_value ) && $this->compare_hashes_on_different_os( $file_path, $hash_value ) ) {
 					return true;
 				}
 			}
@@ -200,7 +202,7 @@ trait IO {
 	protected function hash_file( string $file_path, string $convert_to = '' ) {
 		global $wp_filesystem;
 		// Initialize the WP filesystem, no more using 'file-put-contents' function.
-		if ( empty( $wp_filesystem ) ) {
+		if ( ! $wp_filesystem instanceof WP_Filesystem_Base ) {
 			require_once ABSPATH . '/wp-admin/includes/file.php';
 			WP_Filesystem();
 		}
@@ -225,55 +227,70 @@ trait IO {
 	/**
 	 * Retrieves the lock file path used in scanning.
 	 *
+	 * @param  string $lock_filename  The lock file name.
+	 *
 	 * @return string The lock file path.
 	 *
 	 * @throws \RuntimeException If the lock file name is not defined.
 	 */
-	protected function get_lock_path(): string {
-		if ( empty( $this->lock_filename ) ) {
+	protected function get_lock_path( string $lock_filename ): string {
+		if ( '' === $lock_filename ) {
 			throw new \RuntimeException( 'Lock file name must be defined in the class using IO trait.' );
 		}
 
-		return $this->get_tmp_path() . DIRECTORY_SEPARATOR . $this->lock_filename;
-	}
-
-	/**
-	 * Create a file lock, so we can check if a process already running.
-	 */
-	public function create_lock() {
-		$this->remove_lock();
-		file_put_contents( $this->get_lock_path(), time(), LOCK_EX ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+		return $this->get_tmp_path() . DIRECTORY_SEPARATOR . $lock_filename;
 	}
 
 	/**
 	 * Delete file lock.
+	 *
+	 * @param  string $lock_filename  The lock file name.
 	 */
-	public function remove_lock() {
-		if ( file_exists( $this->get_lock_path() ) ) {
-			wp_delete_file( $this->get_lock_path() );
+	public function remove_lock( string $lock_filename ) {
+		$lock_path = $this->get_lock_path( $lock_filename );
+		if ( file_exists( $lock_path ) ) {
+			wp_delete_file( $lock_path );
 		}
 	}
 
 	/**
-	 * Check if a lock is valid.
+	 * Atomically acquire a file lock.
 	 *
-	 * @return bool
+	 * @param string $lock_filename The lock filename.
+	 *
+	 * @return bool True when the lock is acquired.
 	 */
-	public function has_lock(): bool {
+	public function try_create_lock( string $lock_filename ): bool {
 		global $wp_filesystem;
-		// Initialize the WP filesystem, no more using 'file-put-contents' function.
-		if ( empty( $wp_filesystem ) ) {
+
+		if ( ! $wp_filesystem instanceof WP_Filesystem_Base ) {
 			require_once ABSPATH . '/wp-admin/includes/file.php';
 			WP_Filesystem();
 		}
-		if ( ! file_exists( $this->get_lock_path() ) ) {
+
+		$lock_path = $this->get_lock_path( $lock_filename );
+
+		if ( is_file( $lock_path ) ) {
+			$time = (int) $wp_filesystem->get_contents( $lock_path );
+
+			// Existing lock is still valid.
+			if ( ( $time + 90 ) >= time() ) {
+				return false;
+			}
+
+			// Remove stale lock.
+			wp_delete_file( $lock_path );
+		}
+
+		$handle = @fopen( $lock_path, 'x' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen, WordPress.PHP.NoSilencedErrors.Discouraged
+
+		if ( false === $handle ) {
+			// Another process acquired the lock.
 			return false;
 		}
-		$time = $wp_filesystem->get_contents( $this->get_lock_path() );
-		if ( strtotime( '+90 seconds', $time ) < time() ) {
-			// Usually a timeout window is 30 seconds, so we should allow lock at 1.30min for safe.
-			return false;
-		}
+
+		fwrite( $handle, (string) time() ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
+		fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 
 		return true;
 	}
@@ -313,8 +330,8 @@ trait IO {
 		}
 
 		// Check if another process is running.
-		$lock_time = get_site_option( $lock_key, 0 );
-		if ( $lock_time && ( $now < $lock_time + $lock_duration ) ) {
+		$lock_time = (int) get_site_option( $lock_key, 0 );
+		if ( $lock_time > 0 && ( $now < $lock_time + $lock_duration ) ) {
 			return false;
 		}
 
@@ -335,5 +352,26 @@ trait IO {
 		$last_run_key = "{$event}_last_run";
 		update_site_option( $last_run_key, time() );
 		delete_site_option( $lock_key );
+	}
+
+	/**
+	 * Detect the line ending style used in a given text.
+	 *
+	 * @param string $text The text to analyze.
+	 *
+	 * @return string The detected line ending style: "\r\n" for Windows, "\n" for Unix, or "\r" for Classic Mac.
+	 */
+	public function detect_line_ending( string $text ): string {
+		$count_crlf = substr_count( $text, "\r\n" );
+		$count_lf   = substr_count( $text, "\n" ) - $count_crlf;
+		$count_cr   = substr_count( $text, "\r" ) - $count_crlf;
+
+		if ( $count_crlf >= $count_lf && $count_crlf >= $count_cr ) {
+			return "\r\n"; // Windows-style.
+		} elseif ( $count_lf >= $count_cr ) {
+			return "\n";   // Unix-style.
+		} else {
+			return "\r";   // Classic Mac (rare).
+		}
 	}
 }

@@ -94,10 +94,13 @@ trait Formats {
 			array( 1, esc_html__( 'second', 'defender-security' ) ),
 		);
 
+		$seconds = 0;
+		$name    = '';
+		$count   = 0;
 		for ( $i = 0, $j = count( $chunks ); $i < $j; $i++ ) {
 			$seconds = $chunks[ $i ][0];
 			$name    = $chunks[ $i ][1];
-			$count   = floor( $since / $seconds );
+			$count   = (int) floor( $since / $seconds );
 			if ( 0 !== $count ) {
 				break;
 			}
@@ -116,6 +119,12 @@ trait Formats {
 	 * @return false|string
 	 */
 	public function get_date( $date ) {
+		if ( ! filter_var( $date, FILTER_VALIDATE_INT ) ) {
+			$date = strtotime( $date );
+		}
+		if ( false === $date ) {
+			return 'n/a';
+		}
 		if ( strtotime( '-24 hours' ) > $date ) {
 			return $this->format_date_time( $date );
 		} else {
@@ -129,7 +138,8 @@ trait Formats {
 	 * @return array
 	 */
 	public function get_times() {
-		$times_interval = (array) apply_filters( 'defender_get_times_interval', array( '00', '30' ) );
+		$times_interval = apply_filters( 'defender_get_times_interval', array( '00', '30' ) );
+		$times_interval = is_array( $times_interval ) ? $times_interval : (array) $times_interval;
 		$data           = array();
 		for ( $i = 0; $i < 24; $i++ ) {
 			foreach ( $times_interval as $min ) {
@@ -142,6 +152,20 @@ trait Formats {
 	}
 
 	/**
+	 * Converts a date string to a local timestamp.
+	 *
+	 * @param string $date        The date string to convert.
+	 * @param bool   $end_of_day  Whether to use the end of the day.
+	 *
+	 * @return int The local timestamp.
+	 */
+	public function date_string_to_timestamp( string $date, bool $end_of_day = false ): int {
+		$dt = new DateTime( $date, wp_timezone() );
+		$end_of_day ? $dt->setTime( 23, 59, 59 ) : $dt->setTime( 0, 0, 0 );
+		return $dt->getTimestamp();
+	}
+
+	/**
 	 * Converts a local timestamp to UTC.
 	 *
 	 * @param  string $timestring  The local timestamp to convert.
@@ -151,14 +175,14 @@ trait Formats {
 	 */
 	public function local_to_utc( $timestring ) {
 		$tz = get_option( 'timezone_string' );
-		if ( ! $tz ) {
+		if ( '' === $tz || false === $tz ) {
 			$gmt_offset = get_option( 'gmt_offset' );
 			if ( 0 === $gmt_offset ) {
 				return strtotime( $timestring );
 			}
 			$tz = $this->get_timezone_string( $gmt_offset );
 		}
-		if ( ! $tz ) {
+		if ( '' === $tz || false === $tz ) {
 			$tz = 'UTC';
 		}
 		$timezone = new DateTimeZone( $tz );
@@ -183,7 +207,7 @@ trait Formats {
 		}
 		$offset = implode( ':', $timezone );
 
-		[ $hours, $minutes ] = explode( ':', $offset );
+		[ $hours, $minutes ] = array_map( 'intval', explode( ':', $offset ) );
 		$seconds             = $hours * 60 * 60 + $minutes * 60;
 		$lc                  = localtime( time(), true );
 		if ( isset( $lc['tm_isdst'] ) ) {
@@ -321,7 +345,7 @@ trait Formats {
 	public function get_time_diff( string $last_time ): string {
 		// If the given time is empty, return a string indicating that the
 		// feature has never been used.
-		if ( empty( $last_time ) ) {
+		if ( '' === $last_time ) {
 			return esc_html__( 'Never', 'defender-security' );
 		}
 

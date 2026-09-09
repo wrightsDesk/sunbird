@@ -3,7 +3,7 @@
  *  Plugin Name:       Popup Box
  *  Plugin URI:        https://wordpress.org/plugin/popup-box/
  *  Description:       The most powerful creator of popups & flyouts
- *  Version:           3.2.10
+ *  Version:           3.2.15
  *  Author:            Wow-Company
  *  Author URI:        https://wow-estore.com/
  *  License:           GPL-2.0+
@@ -183,8 +183,6 @@ if ( ! class_exists( 'WOWP_Plugin' ) ) :
 		 */
 		public function loaded(): void {
 			UpdateDB::init();
-			$languages_folder = dirname( plugin_basename( __FILE__ ) ) . '/languages/';
-			load_plugin_textdomain( 'popup-box', false, $languages_folder );
 		}
 	}
 

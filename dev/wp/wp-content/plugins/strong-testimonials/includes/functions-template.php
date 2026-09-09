@@ -333,6 +333,9 @@ function wpmtst_the_custom_field( $field ) {
 	if ( isset( $field['prop']['action_output'] ) && $field['prop']['action_output'] ) {
 		$value  = get_post_meta( $post->ID, $field_name, true );
 		$output = apply_filters( $field['prop']['action_output'], $field, $value );
+	} elseif ( has_filter( 'wpmtst_output_' . $field_name ) ) {
+		$value  = get_post_meta( $post->ID, $field_name, true );
+		$output = apply_filters( 'wpmtst_output_' . $field_name, $field, $value );
 	} else {
 		switch ( $field['type'] ) {
 			case 'link':
@@ -521,10 +524,15 @@ function wpmtst_the_custom_field( $field ) {
 			default:
 				// text field
 				$output = get_post_meta( $post->ID, $field_name, true );
+				$output = wp_kses_post( $output );
 				if ( '' === $output && isset( $field['prop']['default_display_value'] ) && $field['prop']['default_display_value'] ) {
 					$output = $field['prop']['default_display_value'];
 				}
 		}
+	}
+
+	if ( is_array( $output ) ) {
+		return '';
 	}
 
 	if ( $output ) {
@@ -537,18 +545,44 @@ function wpmtst_the_custom_field( $field ) {
 	return $output;
 }
 
+/**
+ * Same as wpmtst_the_custom_field(), but wraps the result in a <p> instead
+ * of a <div> so themes that style paragraph typography (e.g. .wp-block-paragraph)
+ * apply to it.
+ *
+ * @param array $field
+ *
+ * @since 3.4.0
+ * @return string
+ */
+function wpmtst_the_custom_field_as_paragraph( $field ) {
+	$output = wpmtst_the_custom_field( $field );
+
+	if ( ! $output ) {
+		return '';
+	}
+
+	$output = preg_replace( '/^<div /', '<p ', $output, 1 );
+	$output = preg_replace( '/<\/div>$/', '</p>', $output, 1 );
+
+	return $output;
+}
+
 function wpmtst_container_class() {
 	echo esc_attr( apply_filters( 'wpmtst_container_class', WPMST()->atts( 'container_class' ) ) );
 }
 
 function wpmtst_container_data() {
 	$data_array = apply_filters( 'wpmtst_container_data', WPMST()->atts( 'container_data' ) );
-	if ( $data_array ) {
-		$data = '';
+	if ( $data_array && is_array( $data_array ) ) {
+		$parts = array();
 		foreach ( $data_array as $attr => $value ) {
-			$data .= " data-$attr=$value";
+			$attr    = sanitize_key( $attr );
+			$value   = esc_attr( (string) $value );
+			$parts[] = sprintf( ' data-%s="%s"', $attr, $value );
 		}
-		echo esc_attr( $data );
+		// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Each part built from sanitize_key and esc_attr.
+		echo implode( '', $parts );
 	}
 }
 

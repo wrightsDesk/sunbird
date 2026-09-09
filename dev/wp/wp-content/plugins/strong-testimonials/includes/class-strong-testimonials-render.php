@@ -69,7 +69,7 @@ class Strong_Testimonials_Render {
 	 * @since 2.28.0
 	 */
 	private function add_enqueue_actions() {
-		$options = get_option( 'wpmtst_compat_options' );
+		$options = apply_filters( 'wpmtst_compat_options', get_option( 'wpmtst_compat_options', array() ) );
 
 		/**
 		 * Fallback.
@@ -81,32 +81,31 @@ class Strong_Testimonials_Render {
 		add_action( 'wpmtst_form_rendered', array( $this, 'view_rendered' ) );
 		add_action( 'wpmtst_form_success', array( $this, 'view_rendered' ) );
 
-		// We need to also check if page_loading is set to `advanced` in order for us to take into consideration the `prerender` option
-		if ( isset( $options['prerender'] ) && isset( $options['page_loading'] ) && 'advanced' === isset( $options['page_loading'] ) ) {
-			switch ( $options['prerender'] ) {
-				case 'none':
-					/**
-					 * Use fallback.
-					 */
-					break;
+		$prerender = isset( $options['prerender'] ) ? $options['prerender'] : 'current';
 
-				case 'all':
-					/**
-					 * Provision all views.
-					 * Enqueue stylesheets in head, scripts in footer.
-					 */
-					add_action( 'wp_enqueue_scripts', array( $this, 'provision_all_views' ), 1 );
-					add_action( 'wp_enqueue_scripts', array( $this, 'view_rendered' ) );
-					break;
+		switch ( $prerender ) {
+			case 'none':
+				/**
+				 * Use fallback only.
+				 */
+				break;
 
-				default:
-					/**
-					 * Provision views in current page only.
-					 * Enqueue stylesheets in head, scripts in footer.
-					 */
-					$this->provision_current_page();
-					add_action( 'wp_enqueue_scripts', array( $this, 'view_rendered' ) );
-			}
+			case 'all':
+				/**
+				 * Provision all views.
+				 * Enqueue stylesheets in head, scripts in footer.
+				 */
+				add_action( 'wp_enqueue_scripts', array( $this, 'provision_all_views' ), 1 );
+				add_action( 'wp_enqueue_scripts', array( $this, 'view_rendered' ) );
+				break;
+
+			default:
+				/**
+				 * Provision views in current page only.
+				 * Enqueue stylesheets in head, scripts in footer.
+				 */
+				$this->provision_current_page();
+				add_action( 'wp_enqueue_scripts', array( $this, 'view_rendered' ) );
 		}
 	}
 
@@ -647,9 +646,15 @@ class Strong_Testimonials_Render {
 	 * @return array
 	 */
 	public function parse_view( $out, $pairs, $atts ) {
-		// Convert "id" to "view"
-		if ( isset( $atts['id'] ) && $atts['id'] ) {
-			$atts['view'] = $atts['id'];
+		// Convert "id" to "view" - sanitize to integer to prevent attribute breakout (security).
+		if ( isset( $atts['id'] ) && $atts['id'] !== '' ) {
+			$raw_id  = trim( (string) $atts['id'] );
+			$view_id = absint( $raw_id );
+			// Reject non-numeric or malformed id (e.g. "1 onmouseover=alert(1)").
+			if ( $view_id < 1 || $raw_id !== (string) $view_id ) {
+				return array_merge( array( 'view_not_found' => 1 ), $atts );
+			}
+			$atts['view'] = $view_id;
 			unset( $atts['id'] );
 		} else {
 			return array_merge( array( 'view_not_found' => 1 ), $atts );
@@ -716,6 +721,10 @@ class Strong_Testimonials_Render {
 		}
 
 		$out = array_merge( $this->get_view_defaults(), $view_data, $atts );
+
+		if ( 'form' === ( $out['mode'] ?? '' ) && ( empty( $out['template'] ) || 'default' === $out['template'] ) ) {
+			$out['template'] = 'default-form';
+		}
 
 		return $out;
 	}

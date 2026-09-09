@@ -41,13 +41,47 @@ class Vuln_Result extends Behavior {
 	protected function upgrade_possible( array $bugs ): string {
 		$upgrade = 'disabled';
 		foreach ( $bugs as $bug ) {
-			if ( ! empty( $bug['fixed_in'] ) ) {
+			if ( isset( $bug['fixed_in'] ) && '' !== $bug['fixed_in'] ) {
 				$upgrade = 'enabled';
 				break;
 			}
 		}
 
 		return $upgrade;
+	}
+
+	/**
+	 * Checks if a plugin upgrade is actually possible.
+	 *
+	 * First verifies that at least one vulnerability has a known fixed version,
+	 * then confirms WordPress's update API has an update available for the plugin.
+	 * This guards against showing an upgrade button when the plugin is already at
+	 * the latest version on wp.org, or when the plugin has been removed/closed.
+	 *
+	 * @param  array $data  The raw scan item data for the plugin.
+	 *
+	 * @return string The upgrade status ('disabled' or 'enabled').
+	 */
+	protected function plugin_upgrade_possible( array $data ): string {
+		// No known fixed version in vulnerability data — nothing to upgrade to.
+		if ( 'disabled' === $this->upgrade_possible( $data['bugs'] ) ) {
+			return 'disabled';
+		}
+
+		// Ensure the update transient is current. wp_update_plugins() detects newly
+		// installed/removed plugins and only fires an HTTP request to wp.org when
+		// the plugin list has changed or the transient has expired; otherwise it
+		// is effectively a no-op.
+		wp_update_plugins();
+		$updates = get_site_transient( 'update_plugins' );
+
+		// If the slug is absent from the response, the plugin is either already
+		// at the latest version on wp.org or is not available there (removed/closed).
+		if ( ! isset( $updates->response[ $data['slug'] ] ) ) {
+			return 'disabled';
+		}
+
+		return 'enabled';
 	}
 
 	/**
@@ -61,7 +95,9 @@ class Vuln_Result extends Behavior {
 			if ( 'wp_core' === $data['type'] ) {
 				// Check if the current WP version is the latest.
 				$upgrade = ( new WP_Version() )->check() ? 'disabled' : 'enabled';
-			} elseif ( in_array( $data['type'], array( 'plugin', 'theme' ), true ) ) {
+			} elseif ( 'plugin' === $data['type'] ) {
+				$upgrade = $this->plugin_upgrade_possible( $data );
+			} elseif ( 'theme' === $data['type'] ) {
 				$upgrade = $this->upgrade_possible( $data['bugs'] );
 			} else {
 				$upgrade = 'disabled';
@@ -95,11 +131,22 @@ class Vuln_Result extends Behavior {
 	 * @return array An array with a message indicating successful ignore.
 	 */
 	public function ignore(): array {
-		$scan = Scan::get_last();
-		$scan->ignore_issue( $this->owner->id );
+		$scan       = Scan::get_last();
+		$issue_name = '<b>' . $this->get_issue_name( $this->owner->raw_data ) . '</b>';
+		$res        = $scan->ignore_issue( $this->owner->id );
+		if ( ! $res ) {
+			return array(
+				'type_notice' => 'error',
+				'message'     => $this->get_failed_ignore_result( $issue_name ),
+			);
+		}
 
 		return array(
-			'message' => esc_html__( 'The suspicious file has been successfully ignored.', 'defender-security' ),
+			'message' => sprintf(
+			/* translators: %s: Scan issue name. */
+				esc_html__( 'You’ve successfully ignored the security issue related to %s.', 'defender-security' ),
+				$issue_name
+			),
 		);
 	}
 
@@ -109,11 +156,22 @@ class Vuln_Result extends Behavior {
 	 * @return array An array with a message indicating successful restoration.
 	 */
 	public function unignore(): array {
-		$scan = Scan::get_last();
-		$scan->unignore_issue( $this->owner->id );
+		$scan       = Scan::get_last();
+		$issue_name = '<b>' . $this->get_issue_name( $this->owner->raw_data ) . '</b>';
+		$res        = $scan->unignore_issue( $this->owner->id );
+		if ( ! $res ) {
+			return array(
+				'type_notice' => 'error',
+				'message'     => $this->get_failed_restore_result( $issue_name ),
+			);
+		}
 
 		return array(
-			'message' => esc_html__( 'The suspicious file has been successfully restored.', 'defender-security' ),
+			'message' => sprintf(
+			/* translators: %s: Scan issue name. */
+				esc_html__( 'You’ve successfully restored the security issue related to %s.', 'defender-security' ),
+				$issue_name
+			),
 		);
 	}
 
@@ -182,6 +240,16 @@ class Vuln_Result extends Behavior {
 	 * @since 2.8.1
 	 */
 	private function upgrade_plugin( $slug ): array {
+		if ( null === $this->get_plugin_upgrade_path( $slug ) ) {
+			return array(
+				'type_notice' => 'error',
+				'message'     => esc_html__(
+					'The plugin associated with this vulnerability is no longer installed.',
+					'defender-security'
+				),
+			);
+		}
+
 		$skin     = new Plugin_Skin();
 		$upgrader = new Plugin_Upgrader( $skin );
 		$result   = $upgrader->bulk_upgrade( array( $slug ) );
@@ -196,7 +264,7 @@ class Vuln_Result extends Behavior {
 				'type_notice' => 'error',
 				'message'     => $skin->get_error_messages(),
 			);
-		} elseif ( is_array( $result ) && ! empty( $result[ $slug ] ) ) {
+		} elseif ( is_array( $result ) && isset( $result[ $slug ] ) && array() !== $result[ $slug ] ) {
 			$model = Scan::get_last();
 			$model->remove_issue( $this->owner->id );
 
@@ -217,6 +285,23 @@ class Vuln_Result extends Behavior {
 			'type_notice' => 'info',
 			'message'     => esc_html__( 'There is no update available for this plugin.', 'defender-security' ),
 		);
+	}
+
+	/**
+	 * Return the installed plugin path for a safe, existing plugin slug.
+	 *
+	 * @param mixed $slug Plugin file relative to the plugins directory.
+	 *
+	 * @return string|null
+	 */
+	private function get_plugin_upgrade_path( $slug ): ?string {
+		if ( ! is_string( $slug ) || '' === $slug || 0 !== validate_file( $slug ) ) {
+			return null;
+		}
+
+		$path = trailingslashit( WP_PLUGIN_DIR ) . $slug;
+
+		return is_file( $path ) ? $path : null;
 	}
 
 	/**
@@ -252,7 +337,7 @@ class Vuln_Result extends Behavior {
 			);
 		}
 
-		$abs_path = wp_normalize_path( WP_PLUGIN_DIR ) . DIRECTORY_SEPARATOR . $data['base_slug'];
+		$abs_path = $this->get_abs_plugin_path_by_slug( $data['base_slug'] );
 		if ( file_exists( $abs_path ) && ! $this->remove_vulnerability( $abs_path ) ) {
 			return array(
 				'type_notice' => 'error',
@@ -334,7 +419,7 @@ class Vuln_Result extends Behavior {
 	protected function get_vulnerability_body( array $bug ): string {
 		$text  = '#' . $bug['title'] . PHP_EOL;
 		$text .= '-' . esc_html__( 'Vulnerability type:', 'defender-security' ) . ' ' . $bug['vuln_type'] . PHP_EOL;
-		if ( empty( $bug['fixed_in'] ) ) {
+		if ( ! isset( $bug['fixed_in'] ) || '' === $bug['fixed_in'] ) {
 			$text .= '-' . esc_html__( 'No Update Available', 'defender-security' ) . PHP_EOL;
 		} else {
 			$text .= '-' . esc_html__(
@@ -367,15 +452,25 @@ class Vuln_Result extends Behavior {
 	 *
 	 * @param  array $data  The data containing information about vulnerabilities.
 	 *
-	 * @return array An array with vulnerability details including score and detailed description.
+	 * @return array An array with vulnerability details including score and detail items.
 	 */
 	public function get_details_as_array( array $data ): array {
 		$arr = array();
 		foreach ( $data['bugs'] as $bug ) {
-			$text  = $this->get_vulnerability_body( $bug );
+			$items = array(
+				esc_html__( 'Vulnerability type:', 'defender-security' ) . ' ' . $bug['vuln_type'],
+			);
+
+			if ( ! isset( $bug['fixed_in'] ) || '' === $bug['fixed_in'] ) {
+				$items[] = esc_html__( 'No Update Available', 'defender-security' );
+			} else {
+				$items[] = esc_html__( 'This bug has been fixed in version:', 'defender-security' ) . ' ' . $bug['fixed_in'];
+			}
+
 			$arr[] = array(
-				'score'  => $bug['cvss_score'],
-				'detail' => str_replace( PHP_EOL, '<br/>', $text ),
+				'score' => $bug['cvss_score'],
+				'title' => '#' . $bug['title'],
+				'items' => $items,
 			);
 		}
 

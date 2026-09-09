@@ -1,74 +1,78 @@
-<?php
+<?php // phpcs:ignore
 
 namespace SEOPress\Actions\Api\Options;
 
-if ( ! defined('ABSPATH')) {
-    exit;
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
 }
 
 use SEOPress\Core\Hooks\ExecuteHooks;
 
+/**
+ * Bot Settings
+ */
 class BotSettings implements ExecuteHooks {
-    /**
-	 * Current user ID
+	/**
+	 * The Bot Settings hooks.
 	 *
-	 * @var int
+	 * @since 5.0.0
 	 */
-    private $current_user = '';
+	public function hooks() {
+		add_action( 'rest_api_init', array( $this, 'register' ) );
+	}
 
-    public function hooks() {
-        $this->current_user = wp_get_current_user()->ID;
-        add_action('rest_api_init', [$this, 'register']);
-    }
+	/**
+	 * The Bot Settings permission check.
+	 *
+	 * @param \WP_REST_Request $request The request.
+	 *
+	 * @since 5.5
+	 *
+	 * @return boolean
+	 */
+	public function permissionCheck( \WP_REST_Request $request ) {
+		return current_user_can( seopress_capability( 'manage_options', 'bot' ) );
+	}
 
-    /**
-     * @since 5.5
-     *
-     * @return boolean
-     */
-    public function permissionCheck(\WP_REST_Request $request) {
-        $nonce = $request->get_header('x-wp-nonce');
-        if ($nonce && !wp_verify_nonce($nonce, 'wp_rest')) {
-            return false;
-        }
+	/**
+	 * The Bot Settings register.
+	 *
+	 * @since 5.5
+	 *
+	 * @return void
+	 */
+	public function register() {
+		register_rest_route(
+			'seopress/v1',
+			'/options/bot-settings',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'processGet' ),
+				'permission_callback' => array( $this, 'permissionCheck' ),
+			)
+		);
+	}
 
-        $current_user = $this->current_user ? $this->current_user : wp_get_current_user()->ID;
-        if ( ! user_can( $current_user, 'manage_options' )) {
-            return false;
-        }
+	/**
+	 * The Bot Settings process get.
+	 *
+	 * @param \WP_REST_Request $request The request.
+	 *
+	 * @since 5.5
+	 */
+	public function processGet( \WP_REST_Request $request ) {
+		$options = get_option( 'seopress_bot_option_name' );
 
-        return true;
-    }
+		if ( empty( $options ) ) {
+			return new \WP_REST_Response( array() );
+		}
 
-    /**
-     * @since 5.5
-     *
-     * @return void
-     */
-    public function register() {
-        register_rest_route('seopress/v1', '/options/bot-settings', [
-            'methods'             => 'GET',
-            'callback'            => [$this, 'processGet'],
-            'permission_callback' => [$this, 'permissionCheck'],
-        ]);
-    }
+		$data = array();
 
-    /**
-     * @since 5.5
-     */
-    public function processGet(\WP_REST_Request $request) {
-        $options  = get_option('seopress_bot_option_name');
+		foreach ( $options as $key => $value ) {
+			$data[ $key ] = $value;
+		}
 
-        if (empty($options)) {
-            return;
-        }
-
-        $data = [];
-
-        foreach($options as $key => $value) {
-            $data[$key] = $value;
-        }
-
-        return new \WP_REST_Response($data);
-    }
+		return new \WP_REST_Response( $data );
+	}
 }

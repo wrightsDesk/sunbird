@@ -164,10 +164,18 @@ function wpmtst_settings_custom_fields( $form_id = 1 ) {
 
 	$forms  = get_option( 'wpmtst_custom_forms' );
 	$fields = apply_filters( 'wpmtst_form_fields', $forms[ $form_id ]['fields'] );
+
+	ob_start();
+	do_action( 'wpmtst_fields_editor_upsell_col' );
+	$upsell_col = trim( ob_get_clean() );
 	?>
 
 	<div class="wrap wpmtst">
 	<?php do_action( 'wpmtst_fields_editor_before_fields_intro' ); ?>
+
+	<div id="fields-columns">
+
+	<div id="fields-main">
 
 	<div id="left-col">
 		<div>
@@ -218,6 +226,16 @@ function wpmtst_settings_custom_fields( $form_id = 1 ) {
 			<div><!-- placeholder --></div>
 		</div>
 	</div><!-- #right-col -->
+
+	</div><!-- #fields-main -->
+
+	<?php if ( $upsell_col ) : ?>
+	<div id="upsell-col">
+		<?php echo $upsell_col; ?>
+	</div><!-- #upsell-col -->
+	<?php endif; ?>
+
+	</div><!-- #fields-columns -->
 
 	</div><!-- .wrap -->
 	<?php
@@ -311,7 +329,7 @@ function wpmtst_show_field_secondary( $key, $field ) {
 	/*
 	 * Placeholder
 	 */
-	if ( $field['show_placeholder_option'] ) {
+	if ( $field['show_placeholder_option'] ?? false ) {
 		if ( isset( $field['placeholder'] ) ) {
 			$html .= '<tr class="field-secondary">' . "\n";
 			$html .= '<th>' . esc_html__( 'Placeholder', 'strong-testimonials' ) . '</th>' . "\n";
@@ -323,7 +341,7 @@ function wpmtst_show_field_secondary( $key, $field ) {
 		/*
 		 * Length
 		 */
-	if ( $field['show_length_option'] ) {
+	if ( $field['show_length_option'] ?? false ) {
 		if ( isset( $field['max_length'] ) ) {
 			$html .= '<tr class="field-secondary">' . "\n";
 			$html .= '<th>' . esc_html__( 'Maximum Length', 'strong-testimonials' ) . '</th>' . "\n";
@@ -337,7 +355,7 @@ function wpmtst_show_field_secondary( $key, $field ) {
 	 *
 	 * @since 2.23.0
 	 */
-	if ( $field['show_text_option'] ) {
+	if ( $field['show_text_option'] ?? false ) {
 		if ( isset( $field['text'] ) ) {
 			$html .= '<tr class="field-secondary">' . "\n";
 			$html .= '<th>' . esc_html__( 'Checked value', 'strong-testimonials' ) . '</th>' . "\n";
@@ -351,7 +369,7 @@ function wpmtst_show_field_secondary( $key, $field ) {
 	 */
 	$html .= '<tr class="field-secondary">' . "\n";
 	$html .= '<th>' . esc_html__( 'Before', 'strong-testimonials' ) . '</th>' . "\n";
-	$html .= '<td><input type="text" name="fields[' . esc_attr( $key ) . '][before]" value="' . esc_attr( $field['before'] ) . '"></td>' . "\n";
+	$html .= '<td><input type="text" name="fields[' . esc_attr( $key ) . '][before]" value="' . esc_attr( $field['before'] ?? '' ) . '"></td>' . "\n";
 	$html .= '</tr>' . "\n";
 
 	/*
@@ -359,13 +377,13 @@ function wpmtst_show_field_secondary( $key, $field ) {
 	 */
 	$html .= '<tr class="field-secondary">' . "\n";
 	$html .= '<th>' . esc_html__( 'After', 'strong-testimonials' ) . '</th>' . "\n";
-	$html .= '<td><input type="text" name="fields[' . esc_attr( $key ) . '][after]" value="' . esc_attr( $field['after'] ) . '"></td>' . "\n";
+	$html .= '<td><input type="text" name="fields[' . esc_attr( $key ) . '][after]" value="' . esc_attr( $field['after'] ?? '' ) . '"></td>' . "\n";
 	$html .= '</tr>' . "\n";
 
 	/*
 	 * Default Form Value
 	 */
-	if ( $field['show_default_options'] ) {
+	if ( $field['show_default_options'] ?? false ) {
 		if ( isset( $field['default_form_value'] ) ) {
 			$html .= '<tr class="field-secondary">' . "\n";
 			$html .= '<th>' . esc_html__( 'Default Form Value', 'strong-testimonials' ) . '</th>' . "\n";
@@ -395,7 +413,7 @@ function wpmtst_show_field_secondary( $key, $field ) {
 	/*
 	 * Default Display Value
 	 */
-	if ( $field['show_default_options'] ) {
+	if ( $field['show_default_options'] ?? false ) {
 		// TODO Replace this special handling for checkbox type
 		if ( 'checkbox' !== $field['input_type'] ) {
 			if ( isset( $field['default_display_value'] ) ) {
@@ -421,7 +439,7 @@ function wpmtst_show_field_secondary( $key, $field ) {
 	/*
 	 * Shortcode Options
 	 */
-	if ( $field['show_shortcode_options'] ) {
+	if ( $field['show_shortcode_options'] ?? false ) {
 		if ( isset( $field['shortcode_on_form'] ) ) {
 			$html .= '<tr class="field-secondary">' . "\n";
 			$html .= '<th>' . esc_html__( 'Shortcode on form', 'strong-testimonials' ) . '</th>' . "\n";
@@ -453,8 +471,8 @@ function wpmtst_show_field_admin_table( $key, $field ) {
 	// -------------------
 	// Show in Admin Table
 	// -------------------
-	if ( ! $field['show_admin_table_option'] ) {
-		$html = '<input type="hidden" name="fields[' . esc_attr( $key ) . '][show_admin_table_option]" value="' . esc_attr( $field['show_admin_table_option'] ) . '">';
+	if ( ! ( $field['show_admin_table_option'] ?? false ) ) {
+		$html = '<input type="hidden" name="fields[' . esc_attr( $key ) . '][show_admin_table_option]" value="' . esc_attr( $field['show_admin_table_option'] ?? '' ) . '">';
 		return $html;
 	}
 

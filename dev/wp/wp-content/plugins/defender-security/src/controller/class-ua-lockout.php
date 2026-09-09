@@ -12,6 +12,7 @@ use WP_Defender\Event;
 use Calotes\Component\Request;
 use Calotes\Component\Response;
 use WP_Defender\Traits\Setting;
+use WP_Defender\Model\Lockout_Log;
 use WP_Defender\Model\Setting\User_Agent_Lockout;
 use WP_Defender\Component\Config\Config_Hub_Helper;
 use WP_Defender\Component\User_Agent as User_Agent_Service;
@@ -77,7 +78,6 @@ class UA_Lockout extends Event {
 		if ( ! $this->is_page_active() ) {
 			return;
 		}
-		wp_localize_script( 'def-iplockout', 'ua_lockout', $this->data_frontend() );
 	}
 
 	/**
@@ -90,22 +90,122 @@ class UA_Lockout extends Event {
 	 * @throws Exception  If the table is not defined.
 	 */
 	public function save_settings( Request $request ) {
-		$data        = $request->get_data_by_model( $this->model );
-		$old_enabled = (bool) $this->model->enabled;
-		$prev_data   = $this->model->export();
+		$data                      = $request->get_data_by_model( $this->model );
+		$old_enabled               = $this->model->enabled;
+		$old_malicious_bot_enabled = $this->model->malicious_bot_enabled;
+		$old_fake_bots_enabled     = $this->model->fake_bots_enabled;
+		$prev_data                 = $this->model->export();
 
 		$this->model->import( $data );
 		if ( $this->model->validate() ) {
+			$arr_blocklist = $this->model->get_lockout_list( 'blocklist' );
+			if ( is_array( $arr_blocklist ) && array() !== $arr_blocklist ) {
+				// Update 'Custom User Agents' if 'Blocklist Presets' is enabled.
+				if (
+					$data['blocklist_presets']
+					&& is_array( $data['blocklist_preset_values'] )
+					&& array() !== $data['blocklist_preset_values']
+				) {
+					// Check and remove duplicates.
+					$common_result = array_intersect( $arr_blocklist, $data['blocklist_preset_values'] );
+					if ( array() !== $common_result ) {
+						$arr_blocklist          = User_Agent_Service::check_and_remove_duplicates(
+							$arr_blocklist,
+							$common_result
+						);
+						$this->model->blacklist = implode( PHP_EOL, $arr_blocklist );
+					}
+				}
+				// Update 'Custom User Agents' if 'Scripts Presets' is enabled.
+				if (
+					$data['script_presets']
+					&& is_array( $data['script_preset_values'] )
+					&& array() !== $data['script_preset_values']
+				) {
+					// Check and remove duplicates.
+					$common_result = array_intersect( $arr_blocklist, $data['script_preset_values'] );
+					if ( array() !== $common_result ) {
+						$arr_blocklist          = User_Agent_Service::check_and_remove_duplicates(
+							$arr_blocklist,
+							$common_result
+						);
+						$this->model->blacklist = implode( PHP_EOL, $arr_blocklist );
+					}
+				}
+			}
+
 			$this->model->save();
 			Config_Hub_Helper::set_clear_active_flag();
+			// Attention: next actions after saving model changes.
+			if (
+				( ! $this->model->enabled && $old_enabled ) ||
+				( ! $this->model->malicious_bot_enabled && $old_malicious_bot_enabled )
+			) {
+				wd_di()->get( Malicious_Bot::class )->remove_data();
+			} elseif (
+				( $this->model->enabled && ! $old_enabled && $this->model->malicious_bot_enabled ) ||
+				( $this->model->malicious_bot_enabled && ! $old_malicious_bot_enabled && $this->model->enabled )
+			) {
+				wd_di()->get( Malicious_Bot::class )->rotate_hash();
+			}
+
+			if (
+				( ! $this->model->enabled && $old_enabled ) ||
+				( ! $this->model->fake_bots_enabled && $old_fake_bots_enabled )
+			) {
+				wd_di()->get( Fake_Bot_Detection::class )->remove_data();
+			}
+
 			// Maybe track.
-			if ( ! defender_is_wp_cli() && $this->is_feature_state_changed( $prev_data, $data ) ) {
-				$track_data = array(
-					'Action'                      => $data['enabled'] ? 'Enabled' : 'Disabled',
-					'No of Bots in the Whitelist' => count( $this->model->get_lockout_list( 'allowlist', false ) ),
-					'No of Bots in the Blocklist' => count( $this->model->get_lockout_list( 'blocklist', false ) ),
-				);
-				$this->track_feature( 'def_user_agent_banning', $track_data );
+			if ( ! defender_is_wp_cli() ) {
+				// Track if UA Module is activated/deactivated OR there is a change in State on Add/Remove Custom User Agents (Allowlist/Blocklist).
+				if ( ( $old_enabled !== $data['enabled'] )
+					|| ( $this->is_feature_state_changed( $prev_data['blacklist'], $data['blacklist'] ) )
+					|| ( $this->is_feature_state_changed( $prev_data['whitelist'], $data['whitelist'] ) )
+				) {
+					$track_data = array(
+						'Action'                      => $data['enabled'] ? 'Enabled' : 'Disabled',
+						'No of Bots in the Whitelist' => count( $this->model->get_lockout_list( 'allowlist', false ) ),
+						'No of Bots in the Blocklist' => count( $this->model->get_lockout_list( 'blocklist', false ) ),
+					);
+					$this->track_feature( 'def_user_agent_banning', $track_data );
+				}
+				// New one for 'Blocklist Presets'.
+				if (
+					( $prev_data['blocklist_presets'] !== $data['blocklist_presets'] ) ||
+					( count( $prev_data['blocklist_preset_values'] ) !==
+						count( array_intersect( $prev_data['blocklist_preset_values'], $data['blocklist_preset_values'] ) )
+					)
+				) {
+					$track_data = array(
+						'Action'                 => $data['blocklist_presets'] ? 'Enabled' : 'Disabled',
+						'List of Activated Bots' => implode( ', ', $data['blocklist_preset_values'] ),
+					);
+					$this->track_feature( 'def_ua_blocklist_preset', $track_data );
+				}
+				// New one for 'Script Presets'.
+				if (
+					( $prev_data['script_presets'] !== $data['script_presets'] ) ||
+					( count( $prev_data['script_preset_values'] ) !==
+						count( array_intersect( $prev_data['script_preset_values'], $data['script_preset_values'] ) )
+					)
+				) {
+					$track_data = array(
+						'Action'                    => $data['script_presets'] ? 'Enabled' : 'Disabled',
+						'List of Activated Scripts' => implode( ', ', $data['script_preset_values'] ),
+					);
+					$this->track_feature( 'def_ua_scripts_preset', $track_data );
+				}
+				// Track "Fake Bots Detection".
+				if ( $prev_data['fake_bots_enabled'] !== $data['fake_bots_enabled'] ||
+					$prev_data['fake_bots_lockout_type'] !== $data['fake_bots_lockout_type']
+				) {
+					$data = array(
+						'Action'        => $data['fake_bots_enabled'] ? 'Enabled' : 'Disabled',
+						'Blocking type' => 'temporary' === $data['fake_bots_lockout_type'] ? 'Temporary' : 'Permanent',
+					);
+					$this->track_feature( 'def_fake_crawler', $data );
+				}
 			}
 
 			return new Response(
@@ -159,14 +259,26 @@ class UA_Lockout extends Event {
 	public function data_frontend(): array {
 		$arr_model = $this->model->export();
 
+		// Check for empty Disallow line only if Bot Trap is enabled.
+		$has_empty_disallow = false;
+		if ( $this->model->enabled && $this->model->malicious_bot_enabled ) {
+			$malicious_bot_service = wd_di()->get( \WP_Defender\Component\Malicious_Bot::class );
+			$has_empty_disallow    = $malicious_bot_service->has_empty_disallow_line();
+		}
+
+		$misc = array(
+			'no_ua'                   => '' === $arr_model['blacklist'] && '' === $arr_model['whitelist'],
+			'module_name'             => User_Agent_Lockout::get_module_name(),
+			'blocklist_presets'       => User_Agent_Service::get_blocklist_presets(),
+			'script_presets'          => User_Agent_Service::get_script_presets(),
+			'has_empty_disallow_line' => $has_empty_disallow,
+			'lockouts_last_24_hours'  => Lockout_Log::count_ua_lockouts_in_24_hours(),
+		);
+
 		return array_merge(
 			array(
 				'model' => $arr_model,
-				'misc'  => array(
-					'no_ua'        => '' === $arr_model['blacklist'] && '' === $arr_model['whitelist'],
-					'module_name'  => User_Agent_Lockout::get_module_name(),
-					'spam_ua_list' => User_Agent_Service::get_spam_user_agent_list(),
-				),
+				'misc'  => $misc,
 			),
 			$this->dump_routes_and_nonces()
 		);
@@ -209,7 +321,7 @@ class UA_Lockout extends Event {
 	 */
 	public function import_data( array $data ): void {
 		$model = $this->get_model();
-		if ( ! empty( $data ) ) {
+		if ( array() !== $data ) {
 			$data = $this->adapt_data( $data );
 			$model->import( $data );
 			if ( $model->validate() ) {
@@ -236,18 +348,20 @@ class UA_Lockout extends Event {
 	public function export_ua(): void {
 		$data = array();
 
-		foreach ( $this->model->get_lockout_list( 'blocklist', false ) as $ua ) {
-			$data[] = array(
-				'ua'   => $ua,
-				'type' => 'blocklist',
-			);
-		}
 		foreach ( $this->model->get_lockout_list( 'allowlist', false ) as $ua ) {
 			$data[] = array(
 				'ua'   => $ua,
 				'type' => 'allowlist',
 			);
 		}
+
+		foreach ( $this->model->get_all_selected_blocklist_ua( false ) as $ua ) {
+			$data[] = array(
+				'ua'   => $ua,
+				'type' => 'blocklist',
+			);
+		}
+
 		// WP_Filesystem class doesn’t directly provide a function for opening a stream to php://memory with the 'w' mode.
 		$fp = fopen( 'php://memory', 'w' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
 		foreach ( $data as $fields ) {
@@ -279,16 +393,25 @@ class UA_Lockout extends Event {
 			)
 		);
 
-		$attached_id = $data['id'];
-		if ( ! is_object( get_post( $attached_id ) ) ) {
-			return new Response(
-				false,
-				array( 'message' => esc_html__( 'Your file is invalid!', 'defender-security' ) )
-			);
+		$file        = '';
+		$attached_id = $data['id'] ?? 0;
+		if ( 0 < $attached_id ) {
+			if ( ! is_object( get_post( $attached_id ) ) ) {
+				return new Response(
+					false,
+					array( 'message' => esc_html__( 'Your file is invalid!', 'defender-security' ) )
+				);
+			}
+
+			$file = get_attached_file( $attached_id );
+		} else {
+			$file_data = defender_get_data_from_request( 'file', 'f' );
+			if ( is_array( $file_data ) && isset( $file_data['tmp_name'] ) && is_uploaded_file( $file_data['tmp_name'] ) ) {
+				$file = $file_data['tmp_name'];
+			}
 		}
 
-		$file = get_attached_file( $attached_id );
-		if ( ! is_file( $file ) ) {
+		if ( ! is_string( $file ) || '' === $file || ! is_file( $file ) ) {
 			return new Response(
 				false,
 				array( 'message' => esc_html__( 'Your file is invalid!', 'defender-security' ) )
@@ -312,9 +435,12 @@ class UA_Lockout extends Event {
 
 		return new Response(
 			true,
-			array(
-				'message'  => esc_html__( 'Your blocklist and allowlist have been successfully imported.', 'defender-security' ),
-				'interval' => 1,
+			array_merge(
+				array(
+					'message'    => esc_html__( 'Your blocklist and allowlist have been successfully imported.', 'defender-security' ),
+					'auto_close' => true,
+				),
+				$this->data_frontend()
 			)
 		);
 	}

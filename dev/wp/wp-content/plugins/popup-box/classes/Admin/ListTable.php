@@ -267,7 +267,7 @@ class ListTable extends WP_List_Table {
 
 	public function get_bulk_actions(): array {
 		$actions = [
-			'delete'     => __( 'Delate', 'popup-box' ),
+			'delete'     => __( 'Delete', 'popup-box' ),
 			'activate'   => __( 'Activate', 'popup-box' ),
 			'deactivate' => __( 'Deactivate', 'popup-box' ),
 			'test_on'    => __( 'Test mode ON', 'popup-box' ),

@@ -1,74 +1,133 @@
-<?php
+<?php // phpcs:ignore
 
 namespace SEOPress\Actions\Api\Options;
 
-if ( ! defined('ABSPATH')) {
-    exit;
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
 }
 
 use SEOPress\Core\Hooks\ExecuteHooks;
 
+/**
+ * Pro Settings
+ */
 class ProSettings implements ExecuteHooks {
-    /**
-	 * Current user ID
+	/**
+	 * The Pro Settings hooks.
 	 *
-	 * @var int
+	 * @since 5.0.0
 	 */
-    private $current_user = '';
+	public function hooks() {
+		add_action( 'rest_api_init', array( $this, 'register' ) );
+	}
 
-    public function hooks() {
-        $this->current_user = wp_get_current_user()->ID;
-        add_action('rest_api_init', [$this, 'register']);
-    }
+	/**
+	 * The Pro Settings permission check.
+	 *
+	 * @param \WP_REST_Request $request The request.
+	 *
+	 * @since 5.5
+	 *
+	 * @return boolean
+	 */
+	public function permissionCheck( \WP_REST_Request $request ) {
+		return current_user_can( seopress_capability( 'manage_options', 'pro' ) );
+	}
 
-    /**
-     * @since 5.5
-     *
-     * @return boolean
-     */
-    public function permissionCheck(\WP_REST_Request $request) {
-        $nonce = $request->get_header('x-wp-nonce');
-        if ($nonce && !wp_verify_nonce($nonce, 'wp_rest')) {
-            return false;
-        }
+	/**
+	 * The Pro Settings register.
+	 *
+	 * @since 5.5
+	 *
+	 * @return void
+	 */
+	public function register() {
+		register_rest_route(
+			'seopress/v1',
+			'/options/pro-settings',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'processGet' ),
+				'permission_callback' => array( $this, 'permissionCheck' ),
+			)
+		);
 
-        $current_user = $this->current_user ? $this->current_user : wp_get_current_user()->ID;
-        if ( ! user_can( $current_user, 'manage_options' )) {
-            return false;
-        }
+		register_rest_route(
+			'seopress/v1',
+			'/options/pro-settings',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'processPost' ),
+				'permission_callback' => array( $this, 'permissionCheck' ),
+			)
+		);
+	}
 
-        return true;
-    }
+	/**
+	 * The Pro Settings process post.
+	 *
+	 * @param \WP_REST_Request $request The request.
+	 *
+	 * @since 9.8
+	 *
+	 * @return \WP_REST_Response|\WP_Error
+	 */
+	public function processPost( \WP_REST_Request $request ) {
+		$new_options = $request->get_json_params();
 
-    /**
-     * @since 5.5
-     *
-     * @return void
-     */
-    public function register() {
-        register_rest_route('seopress/v1', '/options/pro-settings', [
-            'methods'             => 'GET',
-            'callback'            => [$this, 'processGet'],
-            'permission_callback' => [$this, 'permissionCheck'],
-        ]);
-    }
+		if ( empty( $new_options ) || ! is_array( $new_options ) ) {
+			return new \WP_Error(
+				'invalid_data',
+				__( 'Invalid data provided.', 'wp-seopress' ),
+				array( 'status' => 400 )
+			);
+		}
 
-    /**
-     * @since 5.5
-     */
-    public function processGet(\WP_REST_Request $request) {
-        $options  = get_option('seopress_pro_option_name');
+		// Sanitize using the same function as PHP form saves.
+		$sanitized_options = seopress_sanitize_options_fields( $new_options );
 
-        if (empty($options)) {
-            return;
-        }
+		// Update the option.
+		update_option( 'seopress_pro_option_name', $sanitized_options );
 
-        $data = [];
+		/**
+		 * Fires after Pro settings are updated via REST API.
+		 *
+		 * @since 9.8
+		 *
+		 * @param array $sanitized_options The updated options.
+		 */
+		do_action( 'seopress_pro_settings_updated', $sanitized_options );
 
-        foreach($options as $key => $value) {
-            $data[$key] = $value;
-        }
+		return new \WP_REST_Response(
+			array(
+				'success' => true,
+				'message' => __( 'Settings saved successfully.', 'wp-seopress' ),
+				'data'    => $sanitized_options,
+			),
+			200
+		);
+	}
 
-        return new \WP_REST_Response($data);
-    }
+	/**
+	 * The Pro Settings process get.
+	 *
+	 * @param \WP_REST_Request $request The request.
+	 *
+	 * @since 5.5
+	 */
+	public function processGet( \WP_REST_Request $request ) {
+		$options = get_option( 'seopress_pro_option_name' );
+
+		if ( empty( $options ) ) {
+			return new \WP_REST_Response( array() );
+		}
+
+		$data = array();
+
+		foreach ( $options as $key => $value ) {
+			$data[ $key ] = $value;
+		}
+
+		return new \WP_REST_Response( $data );
+	}
 }

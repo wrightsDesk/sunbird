@@ -5,6 +5,7 @@
 namespace Burst;
 
 use Burst\Frontend\Tracking\Tracking;
+use Burst\Pro\Frontend\Tracking\Tracking_Pro;
 
 // disable loading of most WP core files.
 define( 'SHORTINIT', true );
@@ -16,15 +17,73 @@ if ( ! file_exists( BASE_PATH . 'wp-load.php' ) ) {
 	die( 'WordPress not installed here' );
 }
 require_once BASE_PATH . 'wp-load.php';
-define( 'BURST_PATH', plugin_dir_path( __FILE__ ) );
 
-require_once __DIR__ . '/src/autoload.php';
+if ( defined( 'BURST_ALLOWED_ORIGINS' ) || defined( 'BURST_HEADLESS_DOMAIN' ) ) {
+	$burst_allowed_origins = defined( 'BURST_ALLOWED_ORIGINS' ) ? explode( ',', BURST_ALLOWED_ORIGINS ) : [];
 
-require_once __DIR__ . '/helpers/php-user-agent/UserAgentParser.php';
-if ( file_exists( __DIR__ . '/src/Pro/Tracking/tracking.php' ) ) {
-	require_once __DIR__ . '/src/Pro/Tracking/tracking.php';
+	if ( defined( 'BURST_HEADLESS_DOMAIN' ) ) {
+		$burst_allowed_origins[] = BURST_HEADLESS_DOMAIN;
+	}
+
+	// Strip protocol from all entries, so both 'https://example.com' and 'example.com' are accepted.
+	$burst_allowed_origins = array_map(
+        // phpcs:ignore
+        fn( $origin ) => parse_url( trim( $origin ), PHP_URL_HOST ) ?: trim( $origin ),
+		$burst_allowed_origins
+	);
+
+	$burst_origin = isset( $_SERVER['HTTP_ORIGIN'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_ORIGIN'] ) ) : '';
+    // phpcs:ignore
+	$burst_origin_host     = parse_url( $burst_origin, PHP_URL_HOST );
+	if ( in_array( $burst_origin_host, $burst_allowed_origins, true ) ) {
+		header( 'Access-Control-Allow-Origin: ' . $burst_origin );
+		header( 'Access-Control-Allow-Credentials: true' );
+		header( 'Access-Control-Allow-Methods: POST, OPTIONS' );
+		header( 'Access-Control-Allow-Headers: Content-Type' );
+
+		if ( isset( $_SERVER['REQUEST_METHOD'] ) && $_SERVER['REQUEST_METHOD'] === 'OPTIONS' ) {
+			header( 'Access-Control-Max-Age: 3600' );
+			http_response_code( 204 );
+			exit;
+		}
+	} else {
+		// Strict mode: constant is defined, but origin not allowed → reject.
+		http_response_code( 403 );
+		exit;
+	}
 }
 
+define( 'BURST_PATH', plugin_dir_path( __FILE__ ) );
+
+// Check if Burst is active, in case the plugin was deactivated in the meantime but javascript is still loading.
+$burst_plugins = [
+	'burst-pro'        => 'burst-pro/burst-pro.php',
+	'burst-statistics' => 'burst-statistics/burst.php',
+];
+
+$burst_dir            = basename( BURST_PATH );
+$burst_active_plugins = (array) get_option( 'active_plugins', [] );
+if ( is_multisite() ) {
+	$burst_network_active_plugins = array_keys( (array) get_site_option( 'active_sitewide_plugins', [] ) );
+	$burst_active_plugins         = array_merge( $burst_active_plugins, $burst_network_active_plugins );
+}
+
+if ( isset( $burst_plugins[ $burst_dir ] ) && ! in_array( $burst_plugins[ $burst_dir ], $burst_active_plugins, true ) ) {
+	return;
+}
+
+require_once __DIR__ . '/includes/autoload.php';
+// Pro adds the City reader (via the burst_geoip_handler filter), external link
+// clicks and campaign parameters. The Tracking_Pro class only exists in the Pro
+// build, so guard on its file before autoloading it (Pro::init() handles the
+// normal load path). The core Country enrichment is registered by the Tracking
+// constructor below.
+if ( file_exists( __DIR__ . '/includes/Pro/Frontend/Tracking/class-tracking-pro.php' ) ) {
+	( new Tracking_Pro() )->init();
+}
+
+// Constructing Tracking registers the GeoIP enrichment on burst_before_track_hit,
+// even on this SHORTINIT path where init() is never called.
 ( new Tracking() )->beacon_track_hit();
 /**
  * Find the base path of WordPress
@@ -34,6 +93,14 @@ function burst_find_wordpress_base_path(): string {
 	$path = dirname( __DIR__, 3 );
 	if ( file_exists( $path . '/wp-load.php' ) ) {
 		return rtrim( $path, '/' ) . '/';
+	}
+
+	// check subdirectories for wp-load.php.
+	$subdirs = glob( $path . '/*', GLOB_ONLYDIR );
+	foreach ( $subdirs as $subdir ) {
+		if ( file_exists( $subdir . '/wp-load.php' ) ) {
+			return rtrim( $subdir, '/' ) . '/';
+		}
 	}
 
 	// check for symlinked directory.
@@ -63,7 +130,7 @@ function burst_find_wordpress_base_path(): string {
  */
 function burst_has_open_basedir_restriction( string $path ): bool {
 	// Default error handler is required.
-    //phpcs:ignore
+	//phpcs:ignore
 	set_error_handler( null );
 	// Clean last error info.
 	error_clear_last();
@@ -71,7 +138,7 @@ function burst_has_open_basedir_restriction( string $path ): bool {
 	// @phpstan-ignore-next-line.
 	@file_exists( $path ); //phpcs:ignore
 	// Restore previous error handler.
-    // phpcs:ignore
+	// phpcs:ignore
 	restore_error_handler();
 	// Return `true` if error has occurred.
 	$error = error_get_last();

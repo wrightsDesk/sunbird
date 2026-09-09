@@ -163,7 +163,7 @@ class Audit_Log extends DB {
 		$model = $orm->get_repository( self::class )
 					->where( 'synced', 'in', array( 0, 1 ) )
 					->order_by( 'id', 'desc' )
-					->limit( '0,2' )
+					->limit( 2, 0 )
 					->get();
 
 		return array_pop( $model );
@@ -189,6 +189,7 @@ class Audit_Log extends DB {
 	 * @param  string   $user_id  Who trigger this event, if it 0, will be guest.
 	 * @param  string   $ip  IP of who trigger this.
 	 * @param  int|bool $paged  Current page.
+	 * @param  int      $per_page  Number of logs per page.
 	 *
 	 * @return array
 	 */
@@ -198,7 +199,8 @@ class Audit_Log extends DB {
 		$events = array(),
 		$user_id = '',
 		$ip = '',
-		$paged = 1
+		$paged = 1,
+		$per_page = 10
 	): array {
 		$orm     = self::get_orm();
 		$builder = $orm->get_repository( self::class );
@@ -211,20 +213,20 @@ class Audit_Log extends DB {
 			$builder->where( 'event_type', 'in', $events );
 		}
 
-		if ( ! empty( $user_id ) ) {
+		if ( is_numeric( $user_id ) && $user_id > 0 ) {
 			$builder->where( 'user_id', $user_id );
 		}
 
-		if ( ! empty( $ip ) ) {
+		if ( is_string( $ip ) && '' !== trim( $ip ) ) {
 			$builder->where( 'ip', 'like', "%$ip%" );
 		}
 		$builder->order_by( 'timestamp', 'desc' );
 
 		if ( false !== $paged ) {
 			// If paged == false, then it will be no paging.
-			$per_page = 20;
-			$offset   = ( ( $paged - 1 ) * $per_page ) . ',' . $per_page;
-			$builder->limit( $offset );
+			$per_page = max( 1, (int) $per_page );
+			$offset   = ( $paged - 1 ) * $per_page;
+			$builder->limit( $per_page, $offset );
 		}
 
 		return $builder->get();
@@ -274,15 +276,15 @@ class Audit_Log extends DB {
 			$builder->where( 'event_type', 'in', $events );
 		}
 
-		if ( ! empty( $user_id ) ) {
+		if ( is_numeric( $user_id ) && $user_id > 0 ) {
 			$builder->where( 'user_id', $user_id );
 		}
 
-		if ( ! empty( $ip ) ) {
+		if ( is_string( $ip ) && '' !== trim( $ip ) ) {
 			$builder->where( 'ip', 'like', "%$ip%" );
 		}
 
-		return $builder->count();
+		return (int) $builder->count();
 	}
 
 	/**

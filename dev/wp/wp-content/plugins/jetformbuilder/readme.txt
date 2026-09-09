@@ -2,9 +2,9 @@
 Contributors: crocoblock, mjhead, hugreed
 Tags: blocks, forms, form builder, contact form, gutenberg, gutenberg forms, multi step form.
 Requires at least: 6.1
-Tested up to: 6.7.1
+Tested up to: 7.0
 Requires PHP: 7.0
-Stable tag: 3.5.2
+Stable tag: 3.6.5.1
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
@@ -123,11 +123,11 @@ Allows adding map coordinates, longitude and latitude, and physical address itse
 - **Spam filtering & protection.** Add a Google reCAPTCHA to your form easily.
 - **File uploads.** Decide which users you would authorize to attach files to your website forms: registered, not-registered, or all users.
 - **Form submit type.** Choose between the page reload and AJAX options.
-- **Drag-and-drop editor.** Grab the form block and place it where you want in a matter of seconds. 
+- **Drag-and-drop editor.** Grab the form block and place it where you want in a matter of seconds.
 - **Input mask.** Three mask types are available – numeric, alphabetical, and alphanumeric. Just copy and paste the needed one to make it work.
 - **Numbers range generator.** Dynamically generate a range of numbers to be used in Checkbox, Select & Radio Fields.
 - **Inline fields editing.** Edit the field labels and descriptions in-place.
-- **Form validation.** Check if the entered user data is correct and whether to let them proceed with the form submission or not. 
+- **Form validation.** Check if the entered user data is correct and whether to let them proceed with the form submission or not.
 - **Form patterns.** Save time while creating a form layout? It’s possible! JetFormBuilder grants access to Form Patterns, which you can use to build contact, login & register, application, profile, booking, and subscription forms.
 
 <a href="https://jetformbuilder.com/?utm_source=wp_org&utm_medium=referral&utm_campaign=jetformbuilder" target="_blank">Read more about all JetFormBuilder features here</a>
@@ -220,7 +220,7 @@ JetFormBuilder uses the WordPress native blocks editor, also known as Gutenberg,
 Yes. You can use the **Insert/Update Post** post-submit Action to add and edit posts of any type from the frontend. Besides that, you’re able to assign and modify any metadata of the given post.
 
 = Can I create a user registration form? =
-Absolutely. You can use the **Register User** post-submit Action to create a custom registration form. This post-submit action allows you to set user metadata, as well. 
+Absolutely. You can use the **Register User** post-submit Action to create a custom registration form. This post-submit action allows you to set user metadata, as well.
 
 = Can the form be integrated with Zapier, Integromat, or similar third-party services? =
 Sure. You can create a script that runs on a webhook in either Zapier or Integromat and then use the **Call Webhook** post-submit Action to launch it when the form is being submitted.
@@ -274,6 +274,180 @@ Once you set the <a href="https://jetformbuilder.com/features/how-to-use-store-f
 You can report security bugs through the Patchstack Vulnerability Disclosure Program. The Patchstack team help validate, triage and handle any security vulnerabilities. [Report a security vulnerability.](https://patchstack.com/database/vdp/jetformbuilder)
 
 == Changelog ==
+
+**3.6.5.1**
+- ADD: Allow extending macro groups in Send Email fields
+- FIX: Support Hierarchical Select in protected price calculations
+
+**3.6.5**
+- ADD: Parent/child support for Post Submit Actions
+- FIX: Default Reset Password email is now sent correctly when using Reset Password actions
+- FIX: Prevent validation bypasses in core and SSR flows
+- FIX: Harden request lifecycle, CSRF, and CAPTCHA validation
+- FIX: Prevent Login Form submission when CAPTCHA validation fails
+- FIX: Restore form submission after correcting CAPTCHA validation errors
+- ADD: Support field macros in Action messages
+- FIX: Prevent JavaScript console error when adding fields in the editor
+- FIX: Correct WYSIWYG behavior when removing Repeater items out of order
+- FIX: Restore the first Repeater image in Fields Preview
+- ADD: Allow customization of the Image Upload directory via filter
+- FIX: Prevent 404 error when Form Records filters match no records
+- FIX: Late-registered form messages displayed status codes
+- FIX: Prevent Insert/Update Post from clearing JetEngine meta for removed fields
+- FIX: Correct Advanced Validation inheritance for form fields
+- FIX: Prevent premature browser validation notices
+
+**3.6.4.2**
+- FIX: Secure payment amount toggle behavior
+- FIX: Safely enable payment amount protection for eligible existing forms
+
+**3.6.4.1**
+- FIX: Broken Access Control vulnerability
+
+**3.6.4**
+- ADD: Add Text Field variations for Email, Password, URL, First Name, Last Name
+- ADD: Show field names in the List View
+- FIX: Hide Honeypot protection fields in the editor after updating to 3.6.2
+- ADD: Add customizable autocomplete attribute for Text Fields
+- FIX: JetFormBuilder forms in JetPopup AJAX popups not initializing correctly
+- FIX: Respect Form Records access capability in REST endpoints
+
+**3.6.3.1**
+- FIX: get_from_db, get_from_users options generators. Make sure the generator options is correctly santized to prevent context injecting.
+
+**3.6.3**
+- FIX: Restore repeater macro filter compatibility without breaking formatted output
+- FIX: Calculated Field now correctly processes empty Multi Select values
+- FIX: Require User Access selection in Media Field settings
+- ADD: Support option labels in Fields Preview macros
+- ADD: Auto-focus search in the “New Action” modal and fix Undo (Cmd/Ctrl+Z) behavior inside action popups
+- ADD: Delete removed Media Field attachments from the Media Library on form submission
+- FIX: Prevent broken widget rendering for non-form form IDs
+- FIX: Normalize media field files after repeater re-observe
+- FIX: Duplicate HTML macro processing
+- FIX: Escape line breaks only inside calculated string values
+- FIX: Recalculate multistep page break state after binding page
+
+**3.6.2.2**
+- FIX: SSR validation privilege escalation hardening
+
+**3.6.2.1**
+- FIX: Prevent unauthorized JetEngine Update Options writes
+
+**3.6.2**
+- FIX: Resolved validation errors when using dynamic values for the Media Field “Maximum Files” setting.
+- FIX: Prevented duplicate _wpnonce field IDs when multiple forms with form safety enabled are rendered on the same page.
+- FIX: Corrected calculated field updates when changing selected options.
+- UPD: Improved Honeypot field markup to make the anti-spam protection less detectable and more accessibility-friendly.
+- FIX: Fixed WYSIWYG field link handling in popups and repeaters, including issues with adding and preserving links.
+- FIX: Fixed calculated fields not displaying a value until a multiple-select field option is selected.
+- FIX: Prevented duplicate WYSIWYG editor IDs when multiple WYSIWYG fields are rendered.
+- FIX: Prevented false Undefined view errors after email verification.
+- FIX: Restored StyleManager opt-out handling for form blocks.
+- FIX: Skipped Phone Field validation when changing the selected country.
+- FIX: Prevented a fatal error in the Update User action when the User Role setting is empty.
+
+**3.6.1.1**
+- FIX: Vulnerability allowing Privilege Escalation
+
+**3.6.1**
+- ADD: Ability to rename form actions [Crocoblock/suggestions#7857](https://github.com/Crocoblock/suggestions/issues/7857)
+- ADD: Hooks for adding custom controls to Elementor and Bricks form widgets
+- FIX: Dynamic Value not working for the Advanced Choices field
+- FIX: Multiline text values are not displayed in calculated fields
+- FIX: Save checkbox field doesn't saved data (Register User Action)
+- FIX: Cloudflare Turnstile Issue - Invalid input for optional parameter "action"
+- FIX: Fatal error Uncaught Jet_Form_Builder\Admin\Exceptions\Not_Found_Page_Exception
+- FIX: input styles after update WP 7.0
+- FIX: Friendly Captcha fatal error during token verification
+- FIX: Advanced Choice block background color handling
+- FIX: editor package translation references
+- FIX: Advanced Choice fixed width style output
+- FIX: Switcher field styles
+- FIX: toDateTime default timezone handling
+- FIX: Option fields apply dynamic and multi-value defaults
+- FIX: Radio field auto page switch stays scoped to enabled fields
+- FIX: Phone Field translations follow current WordPress page locale
+- FIX: Repeater required validation after row removal [Crocoblock/jetformbuilder#564](https://github.com/Crocoblock/jetformbuilder/issues/564)
+- FIX: Litespeed Cache plugin compatibility [Crocoblock/jetformbuilder#603](https://github.com/Crocoblock/jetformbuilder/issues/603)
+- FIX: XSS vulnerability
+
+**3.6.0.1**
+- FIX: Prevent PHP errors appears in some cases and related to the Style Manager module.
+
+**3.6.0**
+- ADD: Use several payment gateways at once in form
+- ADD: Conditional logic to payment gateway
+- ADD: Phone field
+- ADD: New Style Manager
+- ADD: `jet-form-builder/form-record/export/get-blocks-by-post` filter
+- UPD: Form macros logic
+- UPD: Rewrite Generators UI
+- UPD: Modules loader
+- FIX: Space in the markup of Map Field
+- FIX: Migrate blocks registration to apiVersion 3
+- FIX: Incorrect display of large numbers in Form Records
+- FIX: Fixed an issue where message meta returned labels instead of actual values.
+
+**3.5.6.3**
+- ADD: Support preview for AVIF files in Media Field
+- ADD: `jet-form-builder/form-record/general-values-columns` filter for Form Record General Values Columns
+- FIX: LFI vulnerability
+
+**3.5.6.2**
+- FIX: RCE vulnerability
+
+**3.5.6.1**
+- FIX: Compatibility with jetBooking 4.0.0
+
+**3.5.6**
+- ADD: Bricks builder ajax popup compatibility
+- ADD: Added aria-label to hidden input in advanced choices block for better accessibility
+- FIX: CSV export now correctly includes fields with capital letters in their names
+- FIX: Corrected ifEmpty filter behavior - now returns the default value only for empty fields and includes an isNaN check
+- FIX: Missing render states after form import
+- FIX: Insert/Update Term action no longer updates the term slug when only the name is changed
+- FIX: Update User action correctly extract user_id and add helper text in user-compare-password property
+
+**3.5.5**
+- FIX: Register User action password validation for GATEWAY.SUCCESS,GATEWAY.FAILED events
+- FIX: User login after registration in the Register User action
+- FIX: Checkboxes preview
+- FIX: Checkbox field not saving data to the post meta field
+- FIX: Form records export compatibility with WPML
+- FIX: Checkbox value with comma breaks selection
+- FIX: Saving repeater values before row deletion
+- FIX: PHP warnings
+
+**3.5.4**
+- ADD: Timezone argument support for `toDate`, `toDateTime`, and `toTime` filters
+- FIX: Line breaks not displayed in the WYSIWYG field
+- FIX: Calculated field not working with Advanced Choice
+- FIX: Nested conditional blocks not working when parent had `Remove hidden elements from page HTML` option enabled
+- FIX: Conditional block fields recalculation logic
+- FIX: Disable field validation on form init for Advanced Validation type
+- FIX: Turnstile captcha throws an error if the form has more than one Action Button
+- FIX: Incorrect date format output in the Calculated field
+- FIX: Auto-closing dropdown issue in select fields within the preset settings
+- FIX: Broken Access Control vulnerability
+- FIX: Added column existence check to prevent duplicate column name error for `on_event` when migration runs on form submission
+
+**3.5.3**
+- FIX: `Calculated field` not updating after repeater row deletion
+- FIX: Default value issue in the `Repeater field`
+- FIX: SQL syntax error in form records admin on fresh installations
+- ADD: Delete button for unsupported actions
+- FIX: Form submission fails when `Request Key` is numeric only [Crocoblock/jetformbuilder#560](https://github.com/Crocoblock/jetformbuilder/issues/560)
+- FIX: `Switcher field` styles overridden by JetForm styles
+- FIX: `Media field` upload file count
+- FIX: Form step not advancing when reselecting the same radio option [Crocoblock/jetformbuilder#565](https://github.com/Crocoblock/jetformbuilder/issues/565)
+- FIX: `Insert/Update Post` action post thumbnail not set when attachment added via WP Library in the `Drag and Drop File Upload` field
+
+**3.5.2.1**
+- ADD: Support for multiple input formats for post thumbnail in `Insert/Update Post` action
+- FIX: Resetting input values in the `Repeater field` when deleting a row
+- FIX: Controls descriptions
+- FIX: Compatibility with the `JetFormBuilder Drag and Drop File Upload` addon
 
 **3.5.2**
 - FIX: Media field better compatibility with ACF [Crocoblock/jetformbuilder#487](https://github.com/Crocoblock/jetformbuilder/issues/487)
@@ -1131,6 +1305,6 @@ through the Media Field
 
 **1.0.1**
  - FiX: render wysiwyg on front-end
- 
+
 **1.0.0**
  - Initial release

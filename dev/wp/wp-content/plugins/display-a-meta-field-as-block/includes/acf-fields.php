@@ -23,6 +23,9 @@ if ( ! class_exists( ACFFields::class ) ) :
 		 * @return void
 		 */
 		public function run() {
+			// Get block content.
+			add_filter( '_meta_field_block_get_block_content_by_provider', [ $this, 'get_block_content' ], 10, 7 );
+
 			// Don't format fields for rest.
 			add_filter( 'acf/settings/rest_api_format', [ $this, 'api_format' ] );
 
@@ -31,6 +34,36 @@ if ( ! class_exists( ACFFields::class ) ) :
 
 			// Flush the server cache for ACF fields.
 			add_action( 'save_post', [ $this, 'flush_acf_cache' ], 10, 2 );
+		}
+
+		/**
+		 * Get the block content for the field
+		 *
+		 * @param string   $content
+		 * @param string   $field_name
+		 * @param string   $field_type
+		 * @param mixed    $object_id
+		 * @param string   $object_type
+		 * @param array    $attributes
+		 * @param WP_Block $block
+		 *
+		 * @return mixed
+		 */
+		public function get_block_content( $content, $field_name, $field_type, $object_id, $object_type, $attributes, $block ) {
+			if ( 'acf' !== $field_type ) {
+				return $content;
+			}
+
+			if ( function_exists( 'get_field_object' ) ) {
+				$block_value = $this->get_field_value( $field_name, $object_id, $object_type, $attributes, $block );
+
+				// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
+				$content = apply_filters( '_meta_field_block_render_dynamic_block', $block_value['value'] ?? '', $block_value, $object_id, $object_type, $attributes, $block );
+			} else {
+				$content = '<code><em>' . __( 'This data type requires the ACF plugin installed and activated!', 'display-a-meta-field-as-block' ) . '</em></code>';
+			}
+
+			return $content;
 		}
 
 		/**
@@ -76,10 +109,12 @@ if ( ! class_exists( ACFFields::class ) ) :
 		 * @param string     $field_name
 		 * @param int/string $object_id
 		 * @param string     $object_type
+		 * @param array      $attributes
+		 * @param WP_Block   $block
 		 *
 		 * @return mixed
 		 */
-		public function get_field_value( $field_name, $object_id, $object_type = '' ) {
+		public function get_field_value( $field_name, $object_id, $object_type, $attributes, $block ) {
 			// Get the id with object type.
 			$object_id_with_type = $this->get_object_id_with_type( $object_id, $object_type, $field_name );
 
@@ -136,8 +171,29 @@ if ( ! class_exists( ACFFields::class ) ) :
 			// Format it.
 			$field_object['value'] = acf_format_value( $raw_value, $object_id_with_type, $field_object );
 
+			// If strict mode is on, validate the value to protect private fields.
+			if ( $this->the_plugin_instance->get_component( MetaVisibility::class )->has_strict_mode() ) {
+				$field_group = acf_get_field_group( $field_object['parent'] ?? 0 );
+				if ( ! $field_group || empty( $field_group['show_in_rest'] ) ) {
+					$field_object['value'] = '';
+				}
+			}
+
+			// Mark it as formatted.
+			$field_object['is_formatted'] = true;
+
 			return [
-				'value' => $this->render_field( $field_object['value'] ?? '', $object_id, $field_object, $raw_value, $object_type ),
+				'value' => $this->render_field(
+					$field_object['value'],
+					$object_id,
+					$field_object,
+					$raw_value,
+					$object_type,
+					[
+						'attributes' => $attributes,
+						'block'      => $block,
+					]
+				),
 				'field' => $field,
 			];
 		}
@@ -224,6 +280,7 @@ if ( ! class_exists( ACFFields::class ) ) :
 						'post_type'              => 'acf-field',
 						'orderby'                => 'menu_order',
 						'order'                  => 'ASC',
+						// phpcs:ignore WordPressVIPMinimum.Performance.WPQueryParams.SuppressFilters_suppress_filters
 						'suppress_filters'       => true, // DO NOT allow third-party to modify the query.
 						'cache_results'          => true,
 						'update_post_meta_cache' => false,
@@ -267,13 +324,15 @@ if ( ! class_exists( ACFFields::class ) ) :
 		 * @param array  $field
 		 * @param mixed  $raw_value
 		 * @param string $object_type
+		 * @param array  $args
+		 *
 		 * @return void
 		 */
-		public function render_field( $value, $object_id, $field, $raw_value, $object_type = '' ) {
+		public function render_field( $value, $object_id, $field, $raw_value, $object_type = '', $args = [] ) {
 			// Get the value for rendering.
 			$field_value = $this->render_acf_field( $value, $object_id, $field, $raw_value );
 
-			return apply_filters( 'meta_field_block_get_acf_field', $field_value, $object_id, $field, $raw_value, $object_type );
+			return apply_filters( 'meta_field_block_get_acf_field', $field_value, $object_id, $field, $raw_value, $object_type, $args );
 		}
 
 		/**
@@ -293,10 +352,8 @@ if ( ! class_exists( ACFFields::class ) ) :
 				$format_func = 'format_field_' . $field_type;
 				if ( is_callable( [ $this, $format_func ] ) ) {
 					$field_value = $this->{$format_func}( $value, $field, $post_id, $raw_value );
-				} else {
-					if ( in_array( $field_type, [ 'date_picker', 'time_picker', 'date_time_picker' ], true ) ) {
-						$field_value = $this->format_field_datetime( $value, $field, $post_id, $raw_value );
-					}
+				} elseif ( in_array( $field_type, [ 'date_picker', 'time_picker', 'date_time_picker' ], true ) ) {
+					$field_value = $this->format_field_datetime( $value, $field, $post_id, $raw_value );
 				}
 
 				$field_value = is_array( $field_value ) || is_object( $field_value ) ? '<code><em>' . __( 'This data type is not supported! Please contact the author for help.', 'display-a-meta-field-as-block' ) . '</em></code>' : $field_value;
@@ -403,12 +460,10 @@ if ( ! class_exists( ACFFields::class ) ) :
 
 			if ( count( $value_markup ) === 0 ) {
 				$field_value = '';
+			} elseif ( count( $value_markup ) > 1 ) {
+				$field_value = '<ul><li>' . implode( '</li><li>', $value_markup ) . '</li></ul>';
 			} else {
-				if ( count( $value_markup ) > 1 ) {
-					$field_value = '<ul><li>' . implode( '</li><li>', $value_markup ) . '</li></ul>';
-				} else {
-					$field_value = $value_markup[0];
-				}
+				$field_value = $value_markup[0];
 			}
 
 			return $field_value;
@@ -439,12 +494,10 @@ if ( ! class_exists( ACFFields::class ) ) :
 
 			if ( count( $post_array_markup ) === 0 ) {
 				$field_value = '';
+			} elseif ( count( $post_array_markup ) > 1 ) {
+				$field_value = '<ul><li>' . implode( '</li><li>', $post_array_markup ) . '</li></ul>';
 			} else {
-				if ( count( $post_array_markup ) > 1 ) {
-					$field_value = '<ul><li>' . implode( '</li><li>', $post_array_markup ) . '</li></ul>';
-				} else {
-					$field_value = $post_array_markup[0];
-				}
+				$field_value = $post_array_markup[0];
 			}
 
 			return $field_value;
@@ -467,7 +520,7 @@ if ( ! class_exists( ACFFields::class ) ) :
 			$post_array_markup = array_filter(
 				array_map(
 					function ( $post ) {
-							return $this->get_post_link( $post );
+						return $this->get_post_link( $post );
 					},
 					$post_array
 				)
@@ -514,12 +567,10 @@ if ( ! class_exists( ACFFields::class ) ) :
 
 			if ( count( $term_array_markup ) === 0 ) {
 				$field_value = '';
+			} elseif ( count( $term_array_markup ) > 1 ) {
+				$field_value = '<ul><li>' . implode( '</li><li>', $term_array_markup ) . '</li></ul>';
 			} else {
-				if ( count( $term_array_markup ) > 1 ) {
-					$field_value = '<ul><li>' . implode( '</li><li>', $term_array_markup ) . '</li></ul>';
-				} else {
-					$field_value = $term_array_markup[0];
-				}
+				$field_value = $term_array_markup[0];
 			}
 
 			return $field_value;
@@ -552,7 +603,6 @@ if ( ! class_exists( ACFFields::class ) ) :
 			$user_array_markup = array_filter(
 				array_map(
 					function ( $user ) {
-						$user_link         = '';
 						$user_id           = 0;
 						$user_display_name = '';
 
@@ -582,12 +632,10 @@ if ( ! class_exists( ACFFields::class ) ) :
 
 			if ( count( $user_array_markup ) === 0 ) {
 				$field_value = '';
+			} elseif ( count( $user_array_markup ) > 1 ) {
+				$field_value = '<ul><li>' . implode( '</li><li>', $user_array_markup ) . '</li></ul>';
 			} else {
-				if ( count( $user_array_markup ) > 1 ) {
-					$field_value = '<ul><li>' . implode( '</li><li>', $user_array_markup ) . '</li></ul>';
-				} else {
-					$field_value = $user_array_markup[0];
-				}
+				$field_value = $user_array_markup[0];
 			}
 
 			return $field_value;
@@ -847,6 +895,10 @@ if ( ! class_exists( ACFFields::class ) ) :
 		 * @return string
 		 */
 		public function format_field_textarea( $value, $field, $post_id, $raw_value ) {
+			if ( $field['is_formatted'] ?? false ) {
+				return $value;
+			}
+
 			if ( $value ) {
 				if ( 'wpautop' === ( $field['new_lines'] ?? '' ) ) {
 					$field_value = wpautop( $value );
@@ -872,7 +924,12 @@ if ( ! class_exists( ACFFields::class ) ) :
 		 * @return string
 		 */
 		public function format_field_wysiwyg( $value, $field, $post_id, $raw_value ) {
+			if ( $field['is_formatted'] ?? false ) {
+				return $value;
+			}
+
 			if ( $value ) {
+				// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
 				$field_value = apply_filters( 'acf_the_content', $value );
 
 				// Follow the_content function in /wp-includes/post-template.php.
@@ -899,4 +956,3 @@ if ( ! class_exists( ACFFields::class ) ) :
 		}
 	}
 endif;
-

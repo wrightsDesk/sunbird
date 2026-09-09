@@ -65,6 +65,8 @@ jQuery(document).ready(function ($) {
 		"smart-crawl",
 		"slim-seo",
 		"metadata",
+		"siteseo",
+		"surerank",
 	];
 	seo_plugins.forEach(function (item) {
 		$("#seopress-" + item + "-migrate").on("click", function (e) {
@@ -168,6 +170,24 @@ jQuery(document).ready(function ($) {
 						seopressAjaxMigrate.seopress_metadata_csv
 							.seopress_nonce;
 					break;
+				case "seopress-siteseo-migrate":
+					url =
+						seopressAjaxMigrate.seopress_siteseo_migrate
+							.seopress_siteseo_migration;
+					action = "seopress_siteseo_migration";
+					_ajax_nonce =
+						seopressAjaxMigrate.seopress_siteseo_migrate
+							.seopress_nonce;
+					break;
+				case "seopress-surerank-migrate":
+					url =
+						seopressAjaxMigrate.seopress_surerank_migrate
+							.seopress_surerank_migration;
+					action = "seopress_surerank_migration";
+					_ajax_nonce =
+						seopressAjaxMigrate.seopress_surerank_migrate
+							.seopress_nonce;
+					break;
 				default:
 			}
 			self.process_offset(0, self, url, action, _ajax_nonce, id);
@@ -216,8 +236,14 @@ jQuery(document).ready(function ($) {
 							$(location).attr("href", data.data.url);
 						}
 					} else {
+						// Offset is usually numeric, but some importers (SmartCrawl) return a
+						// string sentinel like "redirects:200" to signal a phase change.
+						var nextOffset = data.data.offset;
+						if (typeof nextOffset !== "string" || /^\d+$/.test(nextOffset)) {
+							nextOffset = parseInt(nextOffset);
+						}
 						self.process_offset(
-							parseInt(data.data.offset),
+							nextOffset,
 							self,
 							url,
 							action,

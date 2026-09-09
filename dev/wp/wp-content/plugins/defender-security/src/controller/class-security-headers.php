@@ -30,7 +30,6 @@ class Security_Headers extends Event {
 	 * Initializes the model and service, registers routes, and sets up scheduled events if the model is active.
 	 */
 	public function __construct() {
-		add_filter( 'wp_defender_advanced_tools_data', array( $this, 'script_data' ) );
 		$this->model = wd_di()->get( \WP_Defender\Model\Setting\Security_Headers::class );
 		$this->init_headers();
 		$this->register_routes();
@@ -47,19 +46,6 @@ class Security_Headers extends Event {
 		}
 
 		return new \WP_Defender\Model\Setting\Security_Headers();
-	}
-
-	/**
-	 * Provide data to the frontend via localized script.
-	 *
-	 * @param  array $data  Data collection is ready to passed.
-	 *
-	 * @return array Modified data array with added this controller data.
-	 */
-	public function script_data( array $data ): array {
-		$data['security_headers'] = $this->data_frontend();
-
-		return $data;
 	}
 
 	/**
@@ -85,7 +71,7 @@ class Security_Headers extends Event {
 
 				$is_active_prev_data = false;
 
-				if ( ! empty( $prev_data ) ) {
+				if ( array() !== $prev_data ) {
 					$is_active_prev_data = true === $prev_data['sh_xframe'] || true === $prev_data['sh_xss_protection']
 						|| true === $prev_data['sh_content_type_options'] || true === $prev_data['sh_feature_policy']
 						|| true === $prev_data['sh_strict_transport'] || true === $prev_data['sh_referrer_policy'];
@@ -234,10 +220,32 @@ class Security_Headers extends Event {
 	 */
 	public function export_strings(): array {
 		return array(
-			$this->get_model()->is_any_activated() ? esc_html__( 'Active', 'defender-security' ) : esc_html__(
-				'Inactive',
+			\WP_Defender\Model\Setting\Security_Headers::get_module_name() . ' '
+			. ( $this->get_model()->is_any_activated() ? esc_html__( 'active', 'defender-security' ) : esc_html__(
+				'inactive',
 				'defender-security'
-			),
+			) ),
+		);
+	}
+
+	/**
+	 * Generates configuration strings based on the provided configuration.
+	 *
+	 * @param  array $config  Configuration data.
+	 *
+	 * @return array Returns an array of configuration strings.
+	 */
+	public function config_strings( array $config ): array {
+		$active = ( isset( $config['sh_xframe'] ) && $config['sh_xframe'] )
+			|| ( isset( $config['sh_xss_protection'] ) && $config['sh_xss_protection'] )
+			|| ( isset( $config['sh_content_type_options'] ) && $config['sh_content_type_options'] )
+			|| ( isset( $config['sh_feature_policy'] ) && $config['sh_feature_policy'] )
+			|| ( isset( $config['sh_strict_transport'] ) && $config['sh_strict_transport'] )
+			|| ( isset( $config['sh_referrer_policy'] ) && $config['sh_referrer_policy'] );
+
+		return array(
+			\WP_Defender\Model\Setting\Security_Headers::get_module_name() . ' '
+			. ( $active ? esc_html__( 'active', 'defender-security' ) : esc_html__( 'inactive', 'defender-security' ) ),
 		);
 	}
 }

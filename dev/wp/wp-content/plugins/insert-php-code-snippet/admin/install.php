@@ -26,9 +26,31 @@ function xyz_ips_network_install($networkwide) {
 function xyz_ips_install(){
     global $wpdb;
 
-    $pluginName = 'xyz-wp-insert-code-snippet/xyz-wp-insert-code-snippet.php';
-if (is_plugin_active($pluginName)) {
-  wp_die( "The plugin Insert PHP Code Snippet cannot be activated unless the premium version of this plugin is deactivated. Back to <a href='".admin_url()."plugins.php'>Plugin Installation</a>." );
+    $plugin_name = 'xyz-wp-insert-code-snippet/xyz-wp-insert-code-snippet.php';
+    if ( is_plugin_active( $plugin_name ) ) {
+    
+        wp_die(
+            sprintf(
+                /* translators: 1: Plugin name, 2: Deactivate target, 3: Link to plugins page */
+                esc_html__( 'The plugin %1$s cannot be activated unless the %2$s is deactivated. Back to %3$s.', 'insert-php-code-snippet' ),
+                '<strong>Insert PHP Code Snippet</strong>',
+                '<strong>premium version</strong>',
+                sprintf(
+                    '<a href="%s">%s</a>',
+                    esc_url( admin_url( 'plugins.php' ) ),
+                    esc_html__( 'Plugin Installation', 'insert-php-code-snippet' )
+                )
+            )
+        );
+    }
+if ( version_compare( PHP_VERSION, '7.0.0', '<' ) ) {
+    wp_die(
+        sprintf(
+            'This plugin requires PHP version 7.0 or higher. You are using PHP %s. <a href="%s">Go back to Plugins page</a>.',
+            PHP_VERSION,
+            esc_url( admin_url( 'plugins.php' ) )
+        )
+    );
 }
     if(get_option('xyz_ips_sort_order')==''){
         add_option('xyz_ips_sort_order','desc');
@@ -70,6 +92,7 @@ if (is_plugin_active($pluginName)) {
     $queryInsertPhp = "CREATE TABLE IF NOT EXISTS  ".$wpdb->prefix."xyz_ips_short_code (
 `id` int NOT NULL AUTO_INCREMENT,
 `title` varchar(1000) NOT NULL,
+        `description` TEXT NULL ,
 `content` longtext  NOT NULL,
 `short_code` varchar(2000) NOT NULL,
 `status` int NOT NULL,
@@ -85,24 +108,48 @@ PRIMARY KEY (`id`)
 	$wpdb->query("ALTER TABLE ".$wpdb->prefix."xyz_ips_short_code ADD insertionLocation int NOT NULL default 0");
 	if(!(in_array("insertionLocationType", $tblcolums)))
 	$wpdb->query("ALTER TABLE ".$wpdb->prefix."xyz_ips_short_code ADD insertionLocationType int NOT NULL default 0");
+    if(!(in_array("description", $tblcolums)))
+	$wpdb->query("ALTER TABLE ".$wpdb->prefix."xyz_ips_short_code ADD description TEXT NULL ");
+      $table_name      = $wpdb->prefix . 'xyz_ips_usage';
+      $charset_collate = $wpdb->get_charset_collate();
+      $sql = "CREATE TABLE {$table_name} (
+          post_id BIGINT(20) UNSIGNED NOT NULL,
+          snippet_id BIGINT(20) UNSIGNED NOT NULL,
+          post_type VARCHAR(20) NOT NULL,
+          PRIMARY KEY  (post_id, snippet_id),
+          KEY post_id (post_id),
+          KEY snippet_id (snippet_id)
+      ) {$charset_collate};";
+      require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+      dbDelta($sql);
+      // Set sync flag only if not already set
+      if (get_option('xyz_ips_sync_needed') === false) {
+          add_option('xyz_ips_sync_needed', 1);
+      }
+    add_option('xyz_ips_show_snippet_usage',1);//default enable 
     //preview page
-    $user_ID = get_current_user_id();
   	$slug = 'xyz-ics-preview-page';
   	$title = 'Snippet Preview';
-  	$content = '';
-  	// Cheks if doen't exists a post with slug "wordpress-post-created-with-code".
-  	if( !xyz_ips_page_exists_by_slug( $slug ) ) {
-  		// Set the post ID
-  		$post_id = wp_insert_post(
-  									array(
-  											'post_author'       =>   $user_ID,
+     // Use an option to store the ID
+      $preview_page_id = get_option('xyz_ips_preview_page_id');  
+      // Verify the stored ID actually exists in the DB
+      if (!$preview_page_id || get_post_status($preview_page_id) === false) {
+          // Final safety check: see if a page with this slug exists but isn't in our options
+          $existing_id = xyz_ips_page_exists_by_slug($slug);
+          if (!$existing_id) {
+              $post_id = wp_insert_post(array(
+                  'post_author'  => get_current_user_id() ?: 1, // Avoid author 0
   											'post_name'         =>   $slug,
-  											'post_title'        =>   $title,
-  											'post_content'      =>  $content,
+                  'post_title'   => 'Snippet Preview',
+                  'post_content' => '',
   											'post_status'       =>   'draft',
   											'post_type'         =>   'page'
-  									)
-  		);
+              ));
+              update_option('xyz_ips_preview_page_id', $post_id);
+          } else {
+              // Page exists but we didn't have the ID saved; save it now.
+              update_option('xyz_ips_preview_page_id', $existing_id);
+          }
   	}
 }
 register_activation_hook( XYZ_INSERT_PHP_PLUGIN_FILE ,'xyz_ips_network_install');

@@ -11,8 +11,11 @@ use ReflectionClass;
 use ReflectionMethod;
 use Calotes\Helper\HTTP;
 use WP_Defender\Traits\IO;
+use WP_Defender\Traits\Plugin;
 use WP_Defender\Traits\User;
 use WP_Defender\Traits\Permission;
+use WP_Defender\Component\Hub_Connector;
+use WP_Defender\Traits\Defender_Dashboard_Client;
 
 /**
  * The controller class.
@@ -22,6 +25,8 @@ abstract class Controller extends \Calotes\Base\Controller {
 	use IO;
 	use User;
 	use Permission;
+	use Plugin;
+	use Defender_Dashboard_Client;
 
 	/**
 	 * The slug identifier for this controller.
@@ -56,14 +61,14 @@ abstract class Controller extends \Calotes\Base\Controller {
 	/**
 	 * Remove all settings, configs generated in this container runtime.
 	 *
-	 * @return mixed
+	 * @return void
 	 */
 	abstract public function remove_settings();
 
 	/**
 	 * Remove all data.
 	 *
-	 * @return mixed
+	 * @return void
 	 */
 	abstract public function remove_data();
 
@@ -196,5 +201,63 @@ abstract class Controller extends \Calotes\Base\Controller {
 		return defined( 'DEFENDER_DEBUG' ) && true === constant( 'DEFENDER_DEBUG' )
 			? wp_slash( $route )
 			: $route;
+	}
+
+	/**
+	 * Shared data for all controllers (profile, hub connector, isPro, etc.).
+	 *
+	 * @return array
+	 */
+	protected function get_shared_data(): array {
+		$hub_profile_ui = Hub_Connector::get_profile_data_for_ui();
+		$profile_data   = is_array( $hub_profile_ui ) ? $hub_profile_ui : array();
+		$wpmudev        = wd_di()->get( \WP_Defender\Behavior\WPMUDEV::class );
+		$scan_api       = wd_di()->get( \WP_Defender\Controller\Scan::class )->dump_routes_and_nonces();
+
+		// wp_timezone_string() returns a raw offset like "+05:30" for sites that use
+		// a numeric GMT offset instead of a named timezone. Intl.DateTimeFormat does
+		// not accept "+05:30", but it does accept the "UTC+05:30" form in all modern
+		// browsers (Chrome 24+, Firefox 23+, Safari 10+). Prefix the offset so the
+		// JS Intl APIs work correctly without falling back to the browser timezone.
+		$tz_string = wp_timezone_string();
+		if ( preg_match( '/^[+-]/', $tz_string ) ) {
+			$tz_string = 'UTC' . $tz_string;
+		}
+
+		return array(
+			'defenderUrl'        => network_admin_url( 'admin.php?page=wp-defender' ),
+			'pluginUrl'          => WP_DEFENDER_BASE_URL,
+			'adminUrl'           => network_admin_url(),
+			'siteUrl'            => network_site_url(),
+			'timeZone'           => $tz_string,
+			'timeZoneOffset'     => (int) round( wp_timezone()->getOffset( new \DateTime( 'now' ) ) / 60 ),
+			'startOfWeek'        => (int) get_option( 'start_of_week', 1 ),
+			'profileData'        => $profile_data,
+			'hubConnector'       => wd_di()->get( \WP_Defender\Controller\Hub_Connector::class )->data_frontend(),
+			'isPro'              => $wpmudev->is_pro(),
+			'isWpOrg'            => defender_is_wp_org_version(),
+			'pluginUpdate'       => $this->get_plugin_update_notice_data(),
+			'whiteLabel'         => defender_whitelabel_data(),
+			'activityLog'        => wd_di()->get( \WP_Defender\Controller\Activity_Log::class )->data_frontend(),
+			'hubApiKey'          => array(
+				'available' => $wpmudev->is_apikey_available(),
+			),
+			'hosted'             => $wpmudev->is_wpmu_hosting(),
+			'highContrastMode'   => defender_high_contrast(),
+			'isUnlimitedHosting' => defender_is_unlimited_hosting(),
+			'scanApi'            => array(
+				'routes' => $scan_api['routes'] ?? array(),
+				'nonces' => $scan_api['nonces'] ?? array(),
+			),
+		);
+	}
+
+	/**
+	 * Page-specific data for a concrete controller.
+	 *
+	 * @return array
+	 */
+	protected function get_page_data(): array {
+		return array();
 	}
 }

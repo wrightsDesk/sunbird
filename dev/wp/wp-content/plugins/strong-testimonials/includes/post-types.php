@@ -34,8 +34,8 @@ function wpmtst_register_cpt() {
 		register_taxonomy( 'wpm-testimonial-category', array( 'wpm-testimonial' ), apply_filters( 'wpmtst_taxonomy', $args ) );
 	}
 }
-// Less than 15 for WPML compatibility.
-add_action( 'init', 'wpmtst_register_cpt', 12 );
+
+add_action( 'init', 'wpmtst_register_cpt', 40 );
 
 
 /**
@@ -84,7 +84,6 @@ function wpmtst_get_cpt_defaults() {
 		'editor',
 		'thumbnail',
 		'page-attributes',
-		'comments',
 	);
 
 	$args = array(
@@ -103,7 +102,7 @@ function wpmtst_get_cpt_defaults() {
 		'taxonomies'          => array( 'wpm-testimonial-category' ),
 		'has_archive'         => false,
 		'rewrite'             => array(
-			'slug'       => esc_html_x( 'testimonial', 'slug', 'strong-testimonials' ),
+			'slug'       => 'testimonial',
 			'with_front' => true,
 			'feeds'      => false,
 			'pages'      => true,
@@ -133,7 +132,7 @@ function wpmtst_get_tax_defaults() {
 	$args = array(
 		'labels'       => $labels,
 		'hierarchical' => true,
-		'rewrite'      => array( 'slug' => esc_html_x( 'testimonial-category', 'slug', 'strong-testimonials' ) ),
+		'rewrite'      => array( 'slug' => 'testimonial-category' ),
 	);
 
 	return $args;
@@ -151,17 +150,53 @@ function wpmtst_get_tax_defaults() {
 function wpmtst_testimonial_supports( $supports ) {
 	$options = get_option( 'wpmtst_options' );
 
-	if ( isset( $options['support_custom_fields'] ) && $options['support_custom_fields'] ) {
+	$saved_value           = isset( $options['support_custom_fields'] ) && $options['support_custom_fields'];
+	$support_custom_fields = apply_filters( 'wpmtst_support_custom_fields', $saved_value );
+	if ( $support_custom_fields ) {
 		$supports[] = 'custom-fields';
 	}
 
-	if ( isset( $options['support_comments'] ) && $options['support_comments'] ) {
-		$supports[] = 'comments';
+	$support_comments = isset( $options['support_comments'] ) && $options['support_comments'];
+	$support_comments = apply_filters( 'wpmtst_support_comments', $support_comments );
+
+	if ( $support_comments ) {
+		if ( ! in_array( 'comments', $supports, true ) ) {
+			$supports[] = 'comments';
+		}
+	} else {
+		$supports = array_values( array_diff( $supports, array( 'comments' ) ) );
 	}
 
 	return $supports;
 }
 add_filter( 'wpmtst_testimonial_supports', 'wpmtst_testimonial_supports' );
+
+/**
+ * Force comments open/closed on testimonials based on the "Enable comments" setting.
+ *
+ * Post type `supports` only controls the default comment_status for newly
+ * created posts and the admin meta box, so existing testimonials whose
+ * comment_status is already 'open' need this too.
+ *
+ * @since 3.3.5
+ *
+ * @param bool $open    Whether the current post is open for comments.
+ * @param int  $post_id Post ID.
+ *
+ * @return bool
+ */
+function wpmtst_testimonial_comments_open( $open, $post_id ) {
+	$post = get_post( $post_id );
+	if ( ! $post || 'wpm-testimonial' !== $post->post_type ) {
+		return $open;
+	}
+
+	$options          = get_option( 'wpmtst_options' );
+	$support_comments = isset( $options['support_comments'] ) && $options['support_comments'];
+
+	return apply_filters( 'wpmtst_support_comments', $support_comments ) ? $open : false;
+}
+add_filter( 'comments_open', 'wpmtst_testimonial_comments_open', 10, 2 );
 
 
 /**

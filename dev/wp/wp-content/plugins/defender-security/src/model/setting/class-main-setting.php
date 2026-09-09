@@ -71,6 +71,7 @@ class Main_Setting extends Setting {
 	 * @var string
 	 * @sanitize_text_field
 	 * @defender_property
+	 * @rule in[keep,remove]
 	 */
 	public $uninstall_quarantine = 'keep';
 
@@ -93,7 +94,7 @@ class Main_Setting extends Setting {
 	protected function after_load(): void {
 		$site_locale = is_multisite() ? get_site_option( 'WPLANG' ) : get_locale();
 
-		if ( empty( $site_locale ) || 'en_US' === $site_locale ) { // @see wp_dropdown_languages() by default empty string for English.
+		if ( ! is_string( $site_locale ) || '' === $site_locale || 'en_US' === $site_locale ) { // @see wp_dropdown_languages() by default empty string for English.
 			$site_language = 'English';
 		} else {
 			require_once ABSPATH . 'wp-admin/includes/translation-install.php';

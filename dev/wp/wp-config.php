@@ -1,1 +1,1 @@
-X:/.Settings/_configs/wordpress/WP-Configs/wp-config.php
+D:/TLCDev/_BOILERPLATES/WP/wp-config.php

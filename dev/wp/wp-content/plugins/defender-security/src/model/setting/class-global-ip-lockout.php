@@ -27,7 +27,7 @@ class Global_Ip_Lockout extends Setting {
 	 * @var bool
 	 * @defender_property
 	 */
-	public $enabled = false;
+	public bool $enabled = false;
 
 	/**
 	 * Allow self unlock?
@@ -35,7 +35,7 @@ class Global_Ip_Lockout extends Setting {
 	 * @var bool
 	 * @defender_property
 	 */
-	public bool $allow_self_unlock = false;
+	public bool $allow_self_unlock = true;
 
 	/**
 	 * Table column for autosync.

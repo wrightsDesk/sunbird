@@ -53,7 +53,7 @@ class Password_Protection extends Setting {
 	public function get_default_values(): array {
 		return array(
 			'message' => esc_html__(
-				'You are required to change your password because the password you are using exists on database breach records.',
+				'This password has been exposed in a data breach and can’t be used. Choose a different password.',
 				'defender-security'
 			),
 		);
@@ -98,10 +98,12 @@ class Password_Protection extends Setting {
 	 * @return bool
 	 */
 	public function is_active(): bool {
-		return (bool) apply_filters(
+		$enable = apply_filters(
 			'wd_password_protection_enable',
 			$this->enabled && count( $this->user_roles ) > 0
 		);
+
+		return is_bool( $enable ) ? $enable : (bool) $enable;
 	}
 
 	/**

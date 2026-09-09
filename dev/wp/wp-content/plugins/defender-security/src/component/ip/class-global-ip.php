@@ -204,7 +204,7 @@ class Global_IP extends Component {
 			foreach ( $data['allow_list'] as $key => $ip ) {
 				$error = $this->display_validation_message( $ip );
 
-				if ( ! empty( $error ) ) {
+				if ( array() !== $error ) {
 					$errors['allow_list'] = array_merge( $error, $errors['allow_list'] );
 					unset( $data['allow_list'][ $key ] );
 				}
@@ -216,7 +216,7 @@ class Global_IP extends Component {
 			foreach ( $data['block_list'] as $key => $ip ) {
 				$error = $this->display_validation_message( $ip );
 
-				if ( ! empty( $error ) ) {
+				if ( array() !== $error ) {
 					$errors['block_list'] = array_merge( $error, $errors['block_list'] );
 					unset( $data['block_list'][ $key ] );
 				}
@@ -237,7 +237,10 @@ class Global_IP extends Component {
 
 		self::set_last_synced();
 
-		if ( ! empty( $errors['allow_list'] ) || ! empty( $errors['block_list'] ) ) {
+		if (
+			( isset( $errors['allow_list'] ) && array() !== $errors['allow_list'] )
+			|| ( isset( $errors['block_list'] ) && array() !== $errors['block_list'] )
+		) {
 			return new WP_Error( 'defender_hub_api_invalid_ips', esc_html__( 'Invalid IP(s)', 'defender-security' ), $errors );
 		} else {
 			return $ret;
@@ -254,23 +257,23 @@ class Global_IP extends Component {
 		$last_synced = self::get_last_synced();
 
 		return array(
-			'allow_list'           => ! empty( $data['allow_list'] ) && is_array( $data['allow_list'] ) ?
+			'allow_list'           => isset( $data['allow_list'] ) && is_array( $data['allow_list'] ) && array() !== $data['allow_list'] ?
 				implode( '<br>', $data['allow_list'] ) :
 				'',
-			'block_list'           => ! empty( $data['block_list'] ) && is_array( $data['block_list'] ) ?
+			'block_list'           => isset( $data['block_list'] ) && is_array( $data['block_list'] ) && array() !== $data['block_list'] ?
 				implode( '<br>', $data['block_list'] ) :
 				'',
 			'last_synced'          => 0 !== $last_synced ?
 				$this->format_date_time( $last_synced ) :
 				esc_html__( 'Never', 'defender-security' ),
-			'block_list_count'     => ! empty( $data['block_list'] ) && is_array( $data['block_list'] ) ? $this->format_number( count( $data['block_list'] ) ) : 0,
-			'last_update_time_utc' => ! empty( $data['last_update_time_utc'] ) ?
+			'block_list_count'     => isset( $data['block_list'] ) && is_array( $data['block_list'] ) && array() !== $data['block_list'] ? $this->format_number( count( $data['block_list'] ) ) : 0,
+			'last_update_time_utc' => isset( $data['last_update_time_utc'] ) && false !== $data['last_update_time_utc'] && '' !== $data['last_update_time_utc'] ?
 				$this->format_date_time( $data['last_update_time_utc'] ) :
 				esc_html__( 'Never', 'defender-security' ),
-			'last_update_time'     => ! empty( $data['last_update_time'] ) ?
+			'last_update_time'     => isset( $data['last_update_time'] ) && false !== $data['last_update_time'] && '' !== $data['last_update_time'] ?
 				$this->format_date_time( $data['last_update_time'] ) :
 				esc_html__( 'Never', 'defender-security' ),
-			'is_synced_before'     => ! empty( $data ),
+			'is_synced_before'     => array() !== $data,
 		);
 	}
 
@@ -288,6 +291,8 @@ class Global_IP extends Component {
 			try {
 				$data = $this->make_wpmu_free_request( WPMUDEV::API_GLOBAL_IP_LIST );
 			} catch ( Exception $e ) {
+				$this->log( 'Global IP API Error: ' . $e->getMessage(), Firewall::FIREWALL_LOG );
+
 				return new WP_Error( 'defender_hub_api_invalid_returned', $e->getMessage() );
 			}
 
@@ -299,8 +304,12 @@ class Global_IP extends Component {
 
 			if (
 				is_wp_error( $updated_time ) ||
-				empty( $updated_time['last_update_time_utc'] ) ||
-				empty( $data['last_update_time_utc'] ) ||
+				! isset( $updated_time['last_update_time_utc'] ) ||
+				! is_string( $updated_time['last_update_time_utc'] ) ||
+				'' === $updated_time['last_update_time_utc'] ||
+				! isset( $data['last_update_time_utc'] ) ||
+				! is_string( $data['last_update_time_utc'] ) ||
+				'' === $data['last_update_time_utc'] ||
 				strtotime( $updated_time['last_update_time_utc'] ) > strtotime( $data['last_update_time_utc'] )
 			) {
 				$this->attach_behavior( WPMUDEV::class, WPMUDEV::class );
@@ -308,6 +317,8 @@ class Global_IP extends Component {
 				try {
 					$data = $this->make_wpmu_free_request( WPMUDEV::API_GLOBAL_IP_LIST );
 				} catch ( Exception $e ) {
+					$this->log( 'Global IP API Error: ' . $e->getMessage(), Firewall::FIREWALL_LOG );
+
 					return new WP_Error( 'defender_hub_api_invalid_returned', $e->getMessage() );
 				}
 
@@ -357,8 +368,10 @@ class Global_IP extends Component {
 	 * @return array|WP_Error
 	 */
 	public function add_to_global_ip_list( array $params ) {
-		$is_allow_list = ! empty( $params['allow_list'] );
-		$is_block_list = ! empty( $params['block_list'] );
+		$allow_list    = isset( $params['allow_list'] ) ? (array) $params['allow_list'] : array();
+		$block_list    = isset( $params['block_list'] ) ? (array) $params['block_list'] : array();
+		$is_allow_list = array() !== $allow_list;
+		$is_block_list = array() !== $block_list;
 		if ( ! $is_allow_list && ! $is_block_list ) {
 			return new WP_Error(
 				'global_ip_invalid_params',
@@ -368,10 +381,10 @@ class Global_IP extends Component {
 
 		$data = array();
 		if ( $is_allow_list ) {
-			$data['allow_list'] = (array) $params['allow_list'];
+			$data['allow_list'] = $allow_list;
 		}
 		if ( $is_block_list ) {
-			$data['block_list'] = (array) $params['block_list'];
+			$data['block_list'] = $block_list;
 		}
 
 		$this->attach_behavior( WPMUDEV::class, WPMUDEV::class );
@@ -418,7 +431,7 @@ class Global_IP extends Component {
 	 */
 	public function is_show_dashboard_notice(): bool {
 		$reminder = $this->get_dashboard_notice_reminder();
-		if ( $this->is_global_ip_enabled() || empty( $reminder ) || time() < $reminder ) {
+		if ( $this->is_global_ip_enabled() || ! is_int( $reminder ) || time() < $reminder ) {
 			return false;
 		}
 
@@ -426,13 +439,11 @@ class Global_IP extends Component {
 		$user_roles = is_user_logged_in() ? $this->get_roles( wp_get_current_user() ) : array();
 
 		$is_show_to_user = false;
-		if ( ! $is_pro && ! empty(
-			array_intersect(
-				$user_roles,
-				array(
-					$this->super_admin_slug,
-					'administrator',
-				)
+		if ( ! $is_pro && array() !== array_intersect(
+			$user_roles,
+			array(
+				$this->super_admin_slug,
+				'administrator',
 			)
 		) ) {
 			$is_show_to_user = true;
@@ -474,7 +485,7 @@ class Global_IP extends Component {
 	 * @return array|WP_Error
 	 */
 	public function remove_from_blocklist( array $ips ) {
-		if ( empty( $ips ) ) {
+		if ( array() === $ips ) {
 			return new WP_Error( 'defender_hub_api_invalid_ips', esc_html__( 'No IP(s) provided.', 'defender-security' ) );
 		}
 
@@ -580,5 +591,47 @@ class Global_IP extends Component {
 		$model->tried = Lockout_Log::LOCKOUT_IP_CUSTOM;
 		$model->save();
 		// We don’t use defender_notify hook for LOCKOUT_IP_CUSTOM.
+	}
+
+	/**
+	 * Handle expired membership by automatically disabling the Central IP module.
+	 * Logs the action when the feature is disabled due to expired membership.
+	 *
+	 * @return void
+	 */
+	public function handle_expired_membership(): void {
+		if ( $this->model->enabled && $this->is_expired_membership_type() ) {
+			$this->model->enabled = false;
+			$this->model->save();
+			$this->log( 'Central IP automatically disabled due to expired membership.', 'central_ip.log' );
+		}
+	}
+
+	/**
+	 * Toggle the Custom IP List feature on hosting.
+	 *
+	 * @param bool $enable True to enable, false to disable.
+	 *
+	 * @return bool|WP_Error True on success, false if not on WPMU hosting, WP_Error on failure.
+	 */
+	public function toggle_on_hosting( bool $enable ) {
+		if ( ! $this->wpmudev->is_wpmu_hosting() ) {
+			return false;
+		}
+
+		$this->attach_behavior( WPMUDEV::class, WPMUDEV::class );
+
+		$data = $this->make_wpmu_request(
+			WPMUDEV::API_GLOBAL_IP_LIST_HOSTING,
+			array( 'is_active' => $enable ),
+			array( 'method' => 'PUT' )
+		);
+
+		if ( is_wp_error( $data ) ) {
+			$this->log( 'Global IP API Error: ' . $data->get_error_message(), Firewall::FIREWALL_LOG );
+			return $data;
+		}
+
+		return true;
 	}
 }

@@ -35,10 +35,10 @@ class Strong_Testimonials_Helper {
 
 		// Compatibility with plugins that edit wp_kses_post allowed html list. eg. "The Post Grid"
 		add_filter( 'wp_kses_allowed_html', array( $this, 'wpmtst_custom_wpkses_post_tags' ), 99, 2 );
-
+		add_filter( 'wpmtst_view_options', array( $this, 'add_testimonials_view_order' ) );
 		$this->action       = isset( $_GET['action'] ) ? sanitize_text_field( wp_unslash( $_GET['action'] ) ) : false;
 		$this->view_id      = absint( filter_input( INPUT_GET, 'id', FILTER_SANITIZE_NUMBER_INT ) );
-		$this->view_options = apply_filters( 'wpmtst_view_options', get_option( 'wpmtst_view_options' ) );
+		$this->view_options = Strong_Testimonials_Defaults::get_view_options();
 		$this->cat_count    = wpmtst_get_cat_count();
 	}
 
@@ -424,7 +424,7 @@ class Strong_Testimonials_Helper {
 							'before'              => '',
 							'after'               => '',
 							'class'               => '',
-							'container_classes'   => 'then then_display then_not_form then_slideshow',
+							'container_classes'   => 'then then_display then_not_form then_slideshow then_not_single_template',
 							'id'                  => '',
 							'field_action_before' => 'wpmtst_view_editor_before_template_list',
 							'field_action_after'  => '',
@@ -435,7 +435,7 @@ class Strong_Testimonials_Helper {
 							'before'              => '',
 							'after'               => '',
 							'class'               => '',
-							'container_classes'   => 'then then_not_display then_form then_not_slideshow',
+							'container_classes'   => 'then then_not_display then_form then_not_slideshow then_not_single_template',
 							'id'                  => '',
 							'field_action_before' => '',
 							'field_action_after'  => '',
@@ -447,7 +447,7 @@ class Strong_Testimonials_Helper {
 							'before'              => '',
 							'after'               => '',
 							'class'               => '',
-							'container_classes'   => 'then then_display then_not_form then_not_slideshow',
+							'container_classes'   => 'then then_display then_not_form then_not_slideshow then_not_single_template',
 							'id'                  => '',
 							'field_action_before' => 'wpmtst_view_editor_before_layout',
 							'field_action_after'  => '',
@@ -459,7 +459,7 @@ class Strong_Testimonials_Helper {
 							'after'               => '',
 							'class'               => '',
 							'id'                  => 'group-style-option-background',
-							'container_classes'   => 'then then_display then_form then_slideshow',
+							'container_classes'   => 'then then_display then_form then_slideshow then_not_single_template',
 							'field_action_before' => 'wpmtst_view_editor_before_background',
 							'field_action_after'  => '',
 						),
@@ -470,7 +470,7 @@ class Strong_Testimonials_Helper {
 							'after'               => '',
 							'class'               => '',
 							'id'                  => 'group-style-option-color',
-							'container_classes'   => 'then then_display then_form then_slideshow',
+							'container_classes'   => 'then then_display then_form then_slideshow then_not_single_template',
 							'field_action_before' => '',
 							'field_action_after'  => '',
 						),
@@ -481,7 +481,7 @@ class Strong_Testimonials_Helper {
 							'after'               => '',
 							'class'               => 'view-class',
 							'id'                  => '',
-							'container_classes'   => 'then then_display then_form then_slideshow',
+							'container_classes'   => 'then then_display then_form then_slideshow then_not_single_template',
 							'field_action_before' => 'wpmtst_view_editor_before_classes',
 							'field_action_after'  => '',
 						),
@@ -550,9 +550,9 @@ class Strong_Testimonials_Helper {
 		// Select default template if necessary
 		if ( ! $this->view['template'] ) {
 			if ( 'form' === $this->view['mode'] ) {
-				$this->view['template'] = 'default-form';
+				$this->view['template'] = 'default-form-theme';
 			} else {
-				$this->view['template'] = 'default';
+				$this->view['template'] = 'default-theme';
 			}
 		}
 
@@ -568,7 +568,7 @@ class Strong_Testimonials_Helper {
 				class="add-new-h2"><?php esc_html_e( 'Add New', 'strong-testimonials' ); ?></a>
 			<a href="<?php echo esc_url( $url ); ?>"
 				class="add-new-h2"><?php esc_html_e( 'Return To List', 'strong-testimonials' ); ?></a>
-			<?php if ( 'edit' === $this->action ) : ?>
+			<?php if ( 'edit' === $this->action && 'single_template' !== $this->view['mode'] ) : ?>
 				<a href="<?php echo esc_url( $url2 ); ?>"
 					class="add-new-h2"><?php esc_html_e( 'Duplicate This View', 'strong-testimonials' ); ?></a>
 			<?php endif; ?>
@@ -620,7 +620,6 @@ class Strong_Testimonials_Helper {
 			'then_display',
 			'then_form',
 			'then_slideshow',
-			'then_not_single_template',
 			apply_filters( 'wpmtst_view_section', '', 'shortcode' ),
 		);
 		?>
@@ -638,6 +637,10 @@ class Strong_Testimonials_Helper {
 			</div>
 		</div>
 
+		<?php if ( 'single_template' === $this->view['mode'] ) : ?>
+		<input type="hidden" name="view[data][mode]" value="single_template">
+		<script>jQuery(function($){ $.fn.updateScreen('single_template'); });</script>
+		<?php else : ?>
 		<div class="table-row form-view-shortcode <?php echo esc_attr( implode( ' ', array_filter( $classes ) ) ); ?>">
 			<div class="table-cell">
 				<label for="view-shortcode"><?php esc_html_e( 'Shortcode', 'strong-testimonials' ); ?></label>
@@ -656,25 +659,25 @@ class Strong_Testimonials_Helper {
 				?>
 			</div>
 		</div>
-
 		<div id="view-mode" class="table-row mode-select">
-		<div class="table-cell">
-			<?php esc_html_e( 'Mode', 'strong-testimonials' ); ?>
-		</div>
-		<div class="table-cell">
-			<div class="mode-list">
-				<?php foreach ( $this->view_options['mode'] as $mode ) : ?>
-					<label>
-						<input id="<?php echo esc_attr( $mode['name'] ); ?>" type="radio" name="view[data][mode]"
-								value="<?php echo esc_attr( $mode['name'] ); ?>" <?php checked( $this->view['mode'], $mode['name'] ); ?>>
-						<?php echo esc_html( $mode['label'] ); ?>
-						<div class="mode-line"></div>
-					</label>
-				<?php endforeach; ?>
+			<div class="table-cell">
+				<?php esc_html_e( 'Mode', 'strong-testimonials' ); ?>
 			</div>
-			<div class="mode-description"></div>
+			<div class="table-cell">
+				<div class="mode-list">
+					<?php foreach ( $this->view_options['mode'] as $mode ) : ?>
+						<label>
+							<input id="<?php echo esc_attr( $mode['name'] ); ?>" type="radio" name="view[data][mode]"
+									value="<?php echo esc_attr( $mode['name'] ); ?>" <?php checked( $this->view['mode'], $mode['name'] ); ?>>
+							<?php echo esc_html( $mode['label'] ); ?>
+							<div class="mode-line"></div>
+						</label>
+					<?php endforeach; ?>
+				</div>
+				<div class="mode-description"></div>
+			</div>
 		</div>
-		</div>
+		<?php endif; ?>
 		<?php
 	}
 
@@ -1128,7 +1131,7 @@ class Strong_Testimonials_Helper {
 			<p><?php echo wp_kses_post( '<code>order</code>' ); ?></p>
 		</td>
 		<td>
-			<p><?php echo wp_kses_post( 'oldest | newest | random | menu_order' ); ?></p>
+			<p><?php echo wp_kses_post( 'oldest | newest | random | menu_order | submit_date' ); ?></p>
 		</td>
 		<td>
 			<p><?php echo wp_kses_post( '<code>order="random"</code>' ); ?></p>
@@ -2180,7 +2183,13 @@ class Strong_Testimonials_Helper {
 			'display' => WPMST()->templates->get_templates( 'display' ),
 			'form'    => WPMST()->templates->get_templates( 'form' ),
 		);
-		$template_found = in_array( $this->view['template'], WPMST()->templates->get_template_keys(), true );
+
+		$current_template = $this->view['template'];
+		if ( 'form' === $this->current_type && ! isset( $templates['form'][ $current_template ] ) ) {
+			$current_template = $this->view['form_template'] ?? '';
+		}
+
+		$template_found = in_array( $current_template, WPMST()->templates->get_template_keys(), true );
 
 		?>
 		<td colspan="2">
@@ -2192,10 +2201,10 @@ class Strong_Testimonials_Helper {
 							<li>
 								<div>
 									<input class="error" type="radio"
-											id="<?php echo esc_attr( $this->view['template'] ); ?>"
+											id="<?php echo esc_attr( $current_template ); ?>"
 											name="view[data][<?php echo esc_attr( $this->current_mode ); ?>]"
-											value="<?php echo esc_attr( $this->view['template'] ); ?>" checked>
-									<label for="<?php echo esc_attr( $this->view['template'] ); ?>"><?php echo esc_html( $this->view['template'] ); ?></label>
+											value="<?php echo esc_attr( $current_template ); ?>" checked>
+									<label for="<?php echo esc_attr( $current_template ); ?>"><?php echo esc_html( $current_template ); ?></label>
 								</div>
 								<div class="template-description">
 									<p>
@@ -2214,7 +2223,7 @@ class Strong_Testimonials_Helper {
 								<div>
 									<input type="radio" id="template-<?php echo esc_attr( $key ); ?>"
 											name="view[data][<?php echo esc_attr( $this->current_mode ); ?>]"
-											value="<?php echo esc_attr( $key ); ?>" <?php checked( $key, $this->view['template'] ); ?>>
+											value="<?php echo esc_attr( $key ); ?>" <?php checked( $key, $current_template ); ?>>
 									<label for="template-<?php echo esc_attr( $key ); ?>"><?php echo esc_html( $template['config']['name'] ); ?></label>
 								</div>
 								<div class="template-description">
@@ -2693,5 +2702,13 @@ class Strong_Testimonials_Helper {
 		}
 
 		return $tags;
+	}
+
+	public function add_testimonials_view_order( $options ) {
+		if ( isset( $options['order'] ) ) {
+			$options['order']['submit_date'] = esc_html__( 'submit date', 'strong-testimonials' );
+		}
+
+		return $options;
 	}
 }

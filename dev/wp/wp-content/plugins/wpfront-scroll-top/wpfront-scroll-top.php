@@ -3,7 +3,7 @@
  * Plugin Name: WPFront Scroll Top
  * Plugin URI: http://wpfront.com/scroll-top-plugin/
  * Description: Adds a lightweight and smooth "Scroll to Top" button to your WordPress site, improving navigation and user experience with customizable options.
- * Version: 3.0.0
+ * Version: 3.0.1
  * Requires at least: 5.3
  * Requires PHP: 7.2
  * Author: WPFront Team

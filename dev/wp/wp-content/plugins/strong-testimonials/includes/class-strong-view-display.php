@@ -36,8 +36,6 @@ if ( ! class_exists( 'Strong_View_Display' ) ) :
 		 */
 		public function __construct( $atts = array() ) {
 			parent::__construct( $atts );
-			add_filter( 'wpmtst_build_query', array( $this, 'query_pagination' ) );
-				add_filter( 'wpmtst_build_query', array( $this, 'query_infinitescroll' ) );
 			add_action( 'wpmtst_view_processed', array( $this, 'reset_view' ) );
 		}
 
@@ -85,7 +83,7 @@ if ( ! class_exists( 'Strong_View_Display' ) ) :
 					$this->atts['count']    = -1;
 					$args['posts_per_page'] = $this->atts['pagination_settings']['per_page'];
 					$args['paged']          = wpmtst_get_paged();
-				}elseif ( 'slideshow' === $this->atts['mode'] ) {
+				} elseif ( 'slideshow' === $this->atts['mode'] ) {
 					$args['posts_per_page'] = $this->atts['count'];
 				}
 			}
@@ -178,14 +176,11 @@ if ( ! class_exists( 'Strong_View_Display' ) ) :
 			$html  = '';
 
 			if ( ! $this->found_posts ) {
-
 				if ( current_user_can( 'strong_testimonials_views' ) && 'infinitescroll' !== $this->atts['pagination_settings']['type'] ) {
 					$html = $this->nothing_found();
 				}
 			} elseif ( has_filter( 'wpmtst_render_view_template' ) ) {
-
 				$html = apply_filters( 'wpmtst_render_view_template', '', $this );
-
 			} else {
 
 				/**
@@ -201,8 +196,9 @@ if ( ! class_exists( 'Strong_View_Display' ) ) :
 				$html = ob_get_clean();
 
 				$post = $post_before;
-
 			}
+
+			$html = $this->template_not_found_notice( isset( $this->atts['template'] ) ? $this->atts['template'] : '' ) . $html;
 
 			/**
 			 * Remove filters.
@@ -242,7 +238,14 @@ if ( ! class_exists( 'Strong_View_Display' ) ) :
 				'posts_per_page' => -1,
 				'paged'          => null,
 			);
+
+			// Scoped to this single query build so settings from other views
+			// on the same page can't leak into each other.
+			add_filter( 'wpmtst_build_query', array( $this, 'query_pagination' ) );
+			add_filter( 'wpmtst_build_query', array( $this, 'query_infinitescroll' ) );
 			$args = apply_filters( 'wpmtst_build_query', $args );
+			remove_filter( 'wpmtst_build_query', array( $this, 'query_pagination' ) );
+			remove_filter( 'wpmtst_build_query', array( $this, 'query_infinitescroll' ) );
 
 			// id's override category
 			if ( isset( $this->atts['id'] ) && $this->atts['id'] ) {
@@ -259,8 +262,12 @@ if ( ! class_exists( 'Strong_View_Display' ) ) :
 			}
 
 			// order by
-			// TODO improve for allowable custom order
-			if ( isset( $this->atts['order'] ) && 'menu_order' === $this->atts['order'] ) {
+			if ( isset( $this->atts['order'] ) && 'submit_date' === $this->atts['order'] ) {
+				$args['meta_key']  = 'submit_date';
+				$args['orderby']   = 'meta_value';
+				$args['order']     = 'DESC';
+				$args['meta_type'] = 'DATETIME';
+			} elseif ( isset( $this->atts['order'] ) && 'menu_order' === $this->atts['order'] ) {
 				$args['orderby'] = 'menu_order';
 				$args['order']   = 'ASC';
 			} else {
@@ -291,7 +298,7 @@ if ( ! class_exists( 'Strong_View_Display' ) ) :
 			 * @since 1.16
 			 */
 			if ( isset( $this->atts['order'] ) && 'random' === $this->atts['order'] ) {
-					$options = get_option( 'wpmtst_compat_options' );
+					$options = apply_filters( 'wpmtst_compat_options', get_option( 'wpmtst_compat_options', array() ) );
 				if ( isset( $options['random_js'] ) && $options['random_js'] ) {
 					WPMST()->render->add_script( 'wpmtst-random' );
 				} else {
@@ -490,14 +497,21 @@ if ( ! class_exists( 'Strong_View_Display' ) ) :
 				$nav = 'both';
 			}
 
+			$saved_scrolltop = isset( $options['scrolltop'] ) ? (bool) $options['scrolltop'] : true;
+			$saved_offset    = isset( $options['scrolltop_offset'] ) ? (int) $options['scrolltop_offset'] : 0;
+			$scrolltop       = apply_filters( 'wpmtst_scrolltop', array(
+				'enabled' => $saved_scrolltop,
+				'offset'  => $saved_offset,
+			) );
+
 			// Remember: top level is converted to strings!
 			$args = array(
 				'config' => array(
 					'pageSize'      => $this->atts['pagination_settings']['per_page'],
 					'currentPage'   => 1,
 					'pagerLocation' => $nav,
-					'scrollTop'     => $options['scrolltop'],
-					'offset'        => $options['scrolltop_offset'],
+					'scrollTop'     => $scrolltop['enabled'],
+					'offset'        => $scrolltop['offset'],
 					'imagesLoaded'  => true,
 				),
 			);
@@ -512,7 +526,6 @@ if ( ! class_exists( 'Strong_View_Display' ) ) :
 		 */
 		public function has_layouts() {
 			if ( $this->is_masonry() ) {
-
 				WPMST()->render->add_script( 'jquery-masonry' );
 				WPMST()->render->add_script( 'imagesloaded' );
 
@@ -520,12 +533,10 @@ if ( ! class_exists( 'Strong_View_Display' ) ) :
 					WPMST()->render->add_style( 'wpmtst-masonry-style' );
 				}
 			} elseif ( isset( $this->atts['layout'] ) && 'columns' === $this->atts['layout'] ) {
-
 				if ( apply_filters( 'wpmtst_load_columns_style', true ) ) {
 					WPMST()->render->add_style( 'wpmtst-columns-style' );
 				}
 			} elseif ( isset( $this->atts['layout'] ) && 'grid' === $this->atts['layout'] ) {
-
 				if ( apply_filters( 'wpmtst_load_grid_style', true ) ) {
 					WPMST()->render->add_style( 'wpmtst-grid-style' );
 				}
