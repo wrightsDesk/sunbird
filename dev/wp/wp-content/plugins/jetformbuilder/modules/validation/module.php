@@ -19,6 +19,8 @@ use JFB_Components\Module\Base_Module_Url_It;
 use JFB_Components\Module\Base_Module_Url_Trait;
 use JFB_Modules\Block_Parsers\Field_Data_Parser;
 use JFB_Modules\Validation\Class_Validation_Handlers;
+use JFB_Modules\Validation\Handlers\Validation_Handler;
+use JFB_Modules\Validation\Rest_Api\Rest_Validation_Endpoint;
 
 // If this file is called directly, abort.
 if ( ! defined( 'WPINC' ) ) {
@@ -242,6 +244,37 @@ final class Module implements
 		if ( ! empty( $rules ) ) {
 			$this->get_rules()->prepare_rules( $rules );
 
+			// Security: Add signatures for SSR validation rules
+			// For repeater fields, we include the repeater name in the signature
+			// but NOT the row index (which is dynamic). The signature binds the
+			// field to its structural path: [repeater_name, field_name] or just field_name
+			$form_id       = jet_fb_live()->form_id;
+			$field_name    = $block->block_attrs['name'] ?? '';
+			$repeater_name = $block->get_repeater_name();
+
+			// Build canonical path for signature (without row index)
+			$signature_path = $repeater_name
+				? array( $repeater_name, $field_name )
+				: $field_name;
+
+			foreach ( $rules as $index => &$rule ) {
+				if ( 'ssr' === ( $rule['type'] ?? '' ) ) {
+					$rule['_sig'] = Rest_Validation_Endpoint::generate_signature(
+						(int) $form_id,
+						$signature_path,
+						(int) $index
+					);
+
+					printf(
+						'<input type="hidden" name="%1$s[%2$s]" value="%3$s" />',
+						esc_attr( Validation_Handler::MAIN_SIGNATURES_KEY ),
+						esc_attr( Validation_Handler::get_signature_key( $signature_path, (int) $index ) ),
+						esc_attr( $rule['_sig'] )
+					);
+				}
+			}
+			unset( $rule );
+
 			$block->add_attribute(
 				'data-validation-rules',
 				Tools::encode_json( $rules )
@@ -287,9 +320,15 @@ final class Module implements
 	public function is_advanced( array $block_attrs ): bool {
 		$type = $block_attrs['validation']['type'] ?? '';
 
-		return $type
-			? self::FORMAT_ADVANCED === $type
-			: $this->is_advanced_form();
+		if ( self::FORMAT_ADVANCED === $type ) {
+			return true;
+		}
+
+		if ( '' === $type || 'inherit' === $type ) {
+			return $this->is_advanced_form();
+		}
+
+		return false;
 	}
 
 	public function is_advanced_form(): bool {
@@ -318,7 +357,7 @@ final class Module implements
 	public function validate_block( Field_Data_Parser $parser ) {
 		if (
 			! $this->is_advanced( $parser->get_settings() ) ||
-			! $parser->get_value() ||
+			Tools::is_empty( $parser->get_value() ) ||
 			$parser->is_inside_conditional()
 		) {
 			return;

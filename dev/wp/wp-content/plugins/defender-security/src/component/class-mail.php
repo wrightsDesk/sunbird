@@ -34,7 +34,7 @@ class Mail extends Component {
 		$whitelabel = new Dashboard_Whitelabel();
 		if ( $whitelabel->can_whitelabel() ) {
 			$plugin_label = $whitelabel->get_plugin_name( Config_Hub_Helper::WDP_ID );
-			if ( empty( $plugin_label ) ) {
+			if ( false === $plugin_label || '' === $plugin_label ) {
 				$plugin_label = $this->find_feature_name_by_slug( $notification_slug );
 			}
 		} else {
@@ -89,6 +89,8 @@ class Mail extends Component {
 	 */
 	public function get_headers( $from_email, $notification_slug = '' ): array {
 		$from_label = $this->get_sender_name( $notification_slug );
+		$from_email = str_replace( array( "\r", "\n" ), '', $from_email );
+		$from_label = str_replace( array( "\r", "\n" ), '', $from_label );
 		$headers    = array(
 			'From: ' . $from_label . ' <' . $from_email . '>',
 			'Content-Type: text/html; charset=UTF-8',

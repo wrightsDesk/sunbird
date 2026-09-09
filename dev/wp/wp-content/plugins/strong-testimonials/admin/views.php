@@ -234,7 +234,7 @@ function wpmtst_view_add_form() {
 		$query_arg = 'defaults-restored';
 
 	} elseif ( isset( $_POST['submit-form'] ) ) {
-
+	
 		// Sanitize & validate
 		$view    = array(
 			'id'   => 0,
@@ -358,6 +358,7 @@ function wpmtst_view_field_inputs( $key, $field, $adding = false, $source = 'vie
 		'wpmtst_view_field_inputs_types',
 		array(
 			'text'         => esc_html__( 'text', 'strong-testimonials' ),
+			'author'       => esc_html__( 'author (heading)', 'strong-testimonials' ),
 			'link'         => esc_html__( 'link with another field', 'strong-testimonials' ),  // the original link type
 			'link2'        => esc_html__( 'link (must be URL type)', 'strong-testimonials' ),  // @since 1.24.0
 			'date'         => esc_html__( 'date', 'strong-testimonials' ),
@@ -727,6 +728,13 @@ function wpmtst_action_delete_view() {
 	if ( isset( $_REQUEST['action'] ) && 'delete-strong-view' === $_REQUEST['action'] && isset( $_REQUEST['id'] ) ) {
 		$id = abs( (int) filter_input( INPUT_GET, 'id', FILTER_SANITIZE_NUMBER_INT ) );
 		check_admin_referer( 'delete-strong-view_' . $id );
+
+		$default_views = get_option( 'wpmtst_default_views', array() );
+		$protected_ids = array_filter( array( $default_views['single_template'] ?? null ) );
+		if ( in_array( (string) $id, array_map( 'strval', $protected_ids ), true ) ) {
+			wp_die( esc_html__( 'This view is protected and cannot be deleted.', 'strong-testimonials' ) );
+		}
+
 		wpmtst_delete_view( $id );
 		$goback = add_query_arg( 'result', 'view-deleted', wp_get_referer() );
 		wp_redirect( $goback );

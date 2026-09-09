@@ -1,40 +1,39 @@
 <?php
+/**
+ * SEOPress Main functions.
+ *
+ * @package SEOPress
+ * @subpackage Admin_Pages
+ */
 
-defined('ABSPATH') or exit('Please don&rsquo;t call the plugin directly. Thanks :)');
+defined( 'ABSPATH' ) || exit( 'Please don&rsquo;t call the plugin directly. Thanks :)' );
 
-// Set class property
-$this->options = get_option('seopress_option_name');
-$current_tab   ='';
-if (function_exists('seopress_admin_header')) {
-    echo seopress_admin_header();
+/**
+ * Set class property
+ */
+$this->options = get_option( 'seopress_option_name' );
+$current_tab   = '';
+if ( function_exists( 'seopress_admin_header' ) ) {
+	echo seopress_admin_header();
 }
 ?>
 
 <div id="seopress-content" class="seopress-option">
-    <!--Get started-->
-    <?php
-        include_once dirname(dirname(__FILE__)) . '/blocks/intro.php';
-        include_once dirname(dirname(__FILE__)) . '/blocks/notifications.php';
-    ?>
-
-    <div class="seopress-dashboard-columns">
-        <div class="seopress-dashboard-column">
-            <?php
-                include_once dirname(dirname(__FILE__)) . '/blocks/get-started.php';
-                include_once dirname(dirname(__FILE__)) . '/blocks/tasks.php';
-            ?>
-        </div>
-        <?php
-            include_once dirname(dirname(__FILE__)) . '/blocks/insights.php';
-        ?>
-    </div>
-    <?php
-        include_once dirname(dirname(__FILE__)) . '/blocks/features-list.php';
-        include_once dirname(dirname(__FILE__)) . '/blocks/ebooks.php';
-        include_once dirname(dirname(__FILE__)) . '/blocks/integrations.php';
-        include_once dirname(dirname(__FILE__)) . '/blocks/news.php';
-        $this->feature_save();
-    ?>
+	<?php
+		// Unified Settings React shell. ModuleSettings enqueues
+		// admin/settings.js on seopress-option and the bundle reads
+		// PAGE_TYPE = 'dashboard' from the localized
+		// SEOPRESS_SETTINGS_DATA to render the Dashboard as one of
+		// its lazy sections.
+	?>
+	<div class="seopress-php-header"></div>
+	<div id="seopress-admin-settings-root"></div>
+	<?php
+		// "Settings saved" snackbar — must stay inside #seopress-content
+		// so it doesn't leave an orphan block in #wpbody-content after
+		// the floated content (which collapses the body height and
+		// drops the WP footer credits into the middle of the page).
+		echo $this->feature_save(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- markup built and escaped in feature_save().
+	?>
 </div>
-<?php echo $this->feature_save(); ?>
 <?php

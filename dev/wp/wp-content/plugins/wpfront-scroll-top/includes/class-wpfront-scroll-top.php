@@ -21,7 +21,7 @@ defined( 'ABSPATH' ) || exit;
  */
 class WPFront_Scroll_Top {
 
-	const VERSION = '3.0.0.06281';
+	const VERSION = '3.0.1.09211';
 
 	/**
 	 * Dependency injection container.

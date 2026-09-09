@@ -58,16 +58,18 @@ class Antibot extends Event {
 
 	/**
 	 * Exports strings.
+	 *
+	 * @return array
 	 */
 	public function export_strings() {
+		return array();
 	}
-	// End.
 
 	/**
 	 * Track feature.
 	 *
 	 * @param bool   $enabled  Feature is enabled or not.
-	 * @param string $location Options: Feature Page, Dashboard, Onboarding, Hub and Welcome-modal.
+	 * @param string $location Options: Feature Page, Dashboard, Hub and Welcome-modal.
 	 *
 	 * @return void
 	 */

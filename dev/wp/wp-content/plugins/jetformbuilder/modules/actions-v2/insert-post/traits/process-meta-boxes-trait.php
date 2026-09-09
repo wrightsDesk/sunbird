@@ -67,7 +67,7 @@ trait Process_Meta_Boxes_Trait {
 		}
 
 		$post_type        = get_post_type( $post_id );
-		$fields_map       = $modifier->fields_map;
+		$fields_map       = $this->get_current_fields_map( $modifier );
 		$all_meta_fields  = jet_engine()->meta_boxes->get_registered_fields();
 		$found_fields     = $all_meta_fields[ $post_type ] ?? array();
 		$result           = array();
@@ -76,9 +76,33 @@ trait Process_Meta_Boxes_Trait {
 
 		if ( ! empty( $found_fields ) ) {
 			$result = $this->convert_meta_fields_structure( $post_meta_fields, $fields_map );
+			$result = $this->filter_meta_box_fields_by_values( $result );
 		}
 
 		return $result;
+	}
+
+	protected function get_current_fields_map( $modifier ): array {
+		$field_names = array_keys( $modifier->get_request() );
+
+		foreach ( jet_fb_context()->iterate_parsers_list( false ) as $parser ) {
+			$field_names[] = $parser->get_name();
+		}
+
+		return $this->filter_fields_map_by_field_names( $modifier->fields_map, $field_names );
+	}
+
+	protected function filter_fields_map_by_field_names( array $fields_map, array $field_names ): array {
+		return array_intersect_key( $fields_map, array_fill_keys( $field_names, true ) );
+	}
+
+	protected function filter_meta_box_fields_by_values( array $meta_box_fields ): array {
+		if ( ! is_array( $this->value ) ) {
+			return array();
+		}
+
+		// Prevent JetEngine from clearing mapped fields that are absent from the current form.
+		return array_intersect_key( $meta_box_fields, $this->value );
 	}
 
 	public function convert_meta_fields_structure( array $meta_fields, array $fields_map ): array {
@@ -133,22 +157,22 @@ trait Process_Meta_Boxes_Trait {
 				}
 			}
 
-			if ( isset( $values[ $field_key ] ) && is_array( $values[ $field_key ] ) && ( 'checkbox' === $field_data['type'] ?? '' ) ) {
+			if ( isset( $values[ $field_key ] ) && ( 'checkbox' === ( $field_data['type'] ?? '' ) ) ) {
+
 				$options    = $field_data['options'] ?? array();
 				$normalized = array();
-
-				foreach ( $values[ $field_key ] as $checkbox_key => $checkbox_value ) {
+				// Changed: normalize JetEngine checkbox value even if it comes as a scalar.
+				$checkbox_values = (array) $values[ $field_key ];
+				foreach ( $checkbox_values as $checkbox_key => $checkbox_value ) {
 					if ( ! empty( $checkbox_value ) ) {
 						$normalized[ $checkbox_value ] = 'true';
 					}
 				}
-
 				foreach ( $options as $option_key => $option_value ) {
 					if ( ! isset( $normalized[ $option_key ] ) ) {
 						$normalized[ $option_key ] = 'false';
 					}
 				}
-
 				$values[ $field_key ] = $normalized;
 			}
 		}

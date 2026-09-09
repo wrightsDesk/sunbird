@@ -12,11 +12,14 @@ use Calotes\Component\Request;
 use Calotes\Component\Response;
 use WP_Defender\Model\Setting\Main_Setting;
 use WP_Defender\Component\Product_Analytics;
+use WP_Defender\Traits\Array_Utils;
 
 /**
  * Abstract class for Mixpanel Events.
  */
 abstract class Event extends Controller {
+
+	use Array_Utils;
 
 	/**
 	 * Location of the event
@@ -51,7 +54,7 @@ abstract class Event extends Controller {
 	}
 
 	/**
-	 *  Has the data changed?
+	 * Has the data changed?
 	 *
 	 * @param  array $old_data  Old data to compare.
 	 * @param  array $new_data  New data to compare.
@@ -59,7 +62,8 @@ abstract class Event extends Controller {
 	 * @return bool
 	 */
 	protected function is_feature_state_changed( $old_data, $new_data ) {
-		return ! empty( array_diff( $old_data, $new_data ) );
+		// Handle arrays with nested arrays or objects by using deep comparison.
+		return $this->arrays_differ_deeply( $old_data, $new_data );
 	}
 
 	/**
@@ -94,6 +98,18 @@ abstract class Event extends Controller {
 	}
 
 	/**
+	 * Forced tracking.
+	 *
+	 * @param  string $event The event to track.
+	 * @param  array  $data  The data associated with the event.
+	 *
+	 * @return void
+	 */
+	public function forced_track( $event, $data ) {
+		$this->tracker()->track( $event, $data );
+	}
+
+	/**
 	 * Save tracking state.
 	 *
 	 * @param  Request $request  Request object.
@@ -105,7 +121,7 @@ abstract class Event extends Controller {
 		// Forced tracking.
 		$data = $request->get_data();
 		if ( isset( $data['force'] ) ) {
-			$this->tracker()->track( $data['event'], $data['data'] );
+			$this->forced_track( $data['event'], $data['data'] );
 
 			return new Response( true, array() );
 		}

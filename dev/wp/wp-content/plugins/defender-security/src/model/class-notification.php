@@ -94,10 +94,9 @@ abstract class Notification extends Setting {
 	 * This is for when user select report as monthly, we will have the day number, instead of text.
 	 *
 	 * @var int
-	 * @sanitize_text_field
 	 * @defender_property
 	 */
-	public $day_n;
+	public int $day_n = 1;
 
 	/**
 	 * Same as $day.
@@ -164,15 +163,23 @@ abstract class Notification extends Setting {
 	 * @return array
 	 */
 	protected function get_default_user(): array {
+		if ( ! is_user_logged_in() ) {
+			return array();
+		}
+
 		$user_id = get_current_user_id();
 
+		$email = $this->get_current_user_email( $user_id );
+
 		return array(
-			'name'   => $this->get_user_display( $user_id ),
-			'id'     => $user_id,
-			'email'  => $this->get_current_user_email( $user_id ),
-			'role'   => $this->get_current_user_role( $user_id ),
-			'avatar' => get_avatar_url( $this->get_current_user_email( $user_id ) ),
-			'status' => self::USER_SUBSCRIBED,
+			$email => array(
+				'name'   => $this->get_user_display( $user_id ),
+				'id'     => $user_id,
+				'email'  => $email,
+				'role'   => $this->get_current_user_role( $user_id ),
+				'avatar' => get_avatar_url( $email ),
+				'status' => self::USER_SUBSCRIBED,
+			),
 		);
 	}
 
@@ -237,7 +244,7 @@ abstract class Notification extends Setting {
 
 		// Create estimate object.
 		$est = new DateTime( 'now', wp_timezone() );
-		if ( ! empty( $this->last_sent ) ) {
+		if ( $this->last_sent > 0 ) {
 			// set the timestamp of previous.
 			$est->setTimestamp( $this->last_sent );
 		}
@@ -245,7 +252,8 @@ abstract class Notification extends Setting {
 		// Est should be set as the last send. Create now timestamp.
 		$now            = new DateTime( 'now', wp_timezone() );
 		$interval       = DateInterval::createFromDateString( (string) $est->getOffset() . 'seconds' );
-		[ $hour, $min ] = explode( ':', $this->time );
+		$time_parts     = array_pad( explode( ':', (string) $this->time ), 2, 0 );
+		[ $hour, $min ] = $time_parts;
 		$hour           = (int) $hour;
 		$min            = (int) $min;
 		switch ( $this->frequency ) {
@@ -260,6 +268,9 @@ abstract class Notification extends Setting {
 				}
 				break;
 			case 'weekly':
+				if ( '' === $this->day || null === $this->day ) {
+					break;
+				}
 				$est->modify( 'this ' . $this->day );
 				$est->add( $interval );
 				$est->setTime( $hour, $min, 0 );
@@ -271,14 +282,16 @@ abstract class Notification extends Setting {
 			case 'monthly':
 				// We will need to check if the date is passed today, if not, use this, if yes, then queue for next month.
 				$est->setDate( (int) $est->format( 'Y' ), (int) $est->format( 'm' ), 1 );
-				if ( 31 === (int) $this->day_n ) {
-					$this->day_n = (int) $est->format( 't' );
-				}
-				$est->add( new DateInterval( 'P' . ( $this->day_n - 1 ) . 'D' ) );
+				// Clamp day_n to a valid day in the current month.
+				$day_n = max( 1, min( $this->day_n, (int) $est->format( 't' ) ) );
+				$est->add( new DateInterval( 'P' . ( $day_n - 1 ) . 'D' ) );
 				$est->setTime( $hour, $min, 0 );
 				while ( $est->getTimestamp() < $now->getTimestamp() ) {
-					// Already over, move to next month.
-					$est->modify( 'next month' );
+					// Already over, move to first day of next month.
+					$est->modify( 'first day of next month' );
+					// Re-clamp for the new month's length.
+					$day_n = max( 1, min( $this->day_n, (int) $est->format( 't' ) ) );
+					$est->add( new DateInterval( 'P' . ( $day_n - 1 ) . 'D' ) );
 					$est->setTime( $hour, $min, 0 );
 				}
 				break;
@@ -308,7 +321,7 @@ abstract class Notification extends Setting {
 	public function check_active_status(): bool {
 		// Exception after migrating Scheduled scanning to Scan settings.
 		if ( Malware_Report::SLUG === $this->slug
-			&& true === ( new \WP_Defender\Model\Setting\Scan() )->scheduled_scanning
+			&& ( new \WP_Defender\Model\Setting\Scan() )->is_enabled_scheduled_scanning()
 		) {
 			return true;
 		}
@@ -371,14 +384,15 @@ abstract class Notification extends Setting {
 			return $for_hub ? false : esc_html__( 'Never', 'defender-security' );
 		}
 
+		$est_timestamp = ! is_int( $this->est_timestamp ) ? (int) $this->est_timestamp : $this->est_timestamp;
 		if ( $for_hub ) {
 			return $this->check_active_status()
-				? $this->persistent_hub_datetime_format( $this->est_timestamp )
+				? $this->persistent_hub_datetime_format( $est_timestamp )
 				: false;
 		} elseif ( $this->check_active_status() ) {
 			$format = get_option( 'date_format' ) . ' ' . get_option( 'time_format' );
 			$date   = new DateTime( 'now', wp_timezone() );
-			$date->setTimestamp( (int) $this->est_timestamp );
+			$date->setTimestamp( $est_timestamp );
 
 			return $date->format( $format );
 		} else {
@@ -392,7 +406,7 @@ abstract class Notification extends Setting {
 	protected function after_validate(): void {
 		foreach ( $this->out_house_recipients as $recipient ) {
 			$recipient['email'] = trim( $recipient['email'] );
-			if ( empty( $recipient['email'] ) ) {
+			if ( '' === $recipient['email'] ) {
 				continue;
 			}
 			if ( ! filter_var( $recipient['email'], FILTER_VALIDATE_EMAIL ) ) {
@@ -408,7 +422,7 @@ abstract class Notification extends Setting {
 	 * @return void
 	 */
 	public function save(): void {
-		if ( empty( $this->last_sent ) ) {
+		if ( $this->last_sent <= 0 ) {
 			$this->last_sent = time();
 		}
 		$next_run = $this->get_next_run();
@@ -433,6 +447,29 @@ abstract class Notification extends Setting {
 	}
 
 	/**
+	 * Prepare data for persistence.
+	 *
+	 * Recipients are indexed by email in memory (see after_load()), so re-index them back to
+	 * sequential arrays before storing. Otherwise they are JSON-encoded as objects, which on
+	 * downgrade breaks Defender 5 with "all_subscribers.slice is not a function".
+	 *
+	 * @param  array $data  The data array to import values from.
+	 *
+	 * @return array
+	 */
+	protected function prepare_data( $data = array() ): array {
+		$data = parent::prepare_data( $data );
+
+		foreach ( array( 'in_house_recipients', 'out_house_recipients', 'all_subscribers' ) as $key ) {
+			if ( isset( $data[ $key ] ) && is_array( $data[ $key ] ) ) {
+				$data[ $key ] = array_values( $data[ $key ] );
+			}
+		}
+
+		return $data;
+	}
+
+	/**
 	 * Overrided method to manipulate user details dynamically.
 	 */
 	protected function after_load(): void {
@@ -443,17 +480,41 @@ abstract class Notification extends Setting {
 			$user_data = get_userdata( $id );
 
 			if ( $user_data instanceof WP_User ) {
-				$in_house_recipients[] = array(
+				$in_house_recipients[ $user_data->user_email ] = array(
 					'name'   => $user_data->display_name,
 					'id'     => $user_data->ID,
 					'email'  => $user_data->user_email,
 					'role'   => $this->get_first_user_role( $user_data ),
 					'avatar' => get_avatar_url( $id ),
-					'status' => $recipient['status'],
+					'status' => $recipient['status'] ?? '',
 				);
 			}
 		}
 
-		$this->in_house_recipients = $in_house_recipients;
+		$this->in_house_recipients  = $in_house_recipients;
+		$this->out_house_recipients = $this->get_email_indexed_recipients( $this->out_house_recipients );
+	}
+
+	/**
+	 * Indexes recipients by email.
+	 *
+	 * @param  array $recipients  Recipients list.
+	 *
+	 * @return array
+	 */
+	private function get_email_indexed_recipients( array $recipients ): array {
+		$email_indexed_recipients = array();
+
+		foreach ( $recipients as $recipient ) {
+			if ( ! isset( $recipient['email'] ) ) {
+				continue;
+			}
+
+			$email                              = trim( $recipient['email'] );
+			$recipient['email']                 = $email;
+			$email_indexed_recipients[ $email ] = $recipient;
+		}
+
+		return $email_indexed_recipients;
 	}
 }

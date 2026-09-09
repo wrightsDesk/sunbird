@@ -9,6 +9,8 @@
 
 namespace PopupBox\Admin;
 
+defined( 'ABSPATH' ) || exit;
+
 use /**
  * Class WOWP_Plugin
  *
@@ -76,7 +78,7 @@ class Dashboard {
 		if ( $page !== $hook ) {
 			return;
 		}
-		do_action( WOWP_Plugin::PREFIX . '_admin_load_assets' );
+		do_action( WOWP_Plugin::PREFIX . '_admin_load_assets' ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.DynamicHooknameFound
 
 		$slug       = WOWP_Plugin::SLUG;
 		$version    = WOWP_Plugin::info( 'version' );
@@ -147,7 +149,7 @@ class Dashboard {
 						esc_html_e( 'Add New', 'popup-box' ); ?>
                     </a>
 					<?php
-					do_action( WOWP_Plugin::PREFIX . '_admin_header_links' ); ?>
+					do_action( WOWP_Plugin::PREFIX . '_admin_header_links' ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.DynamicHooknameFound ?>
                 </div>
             </div>
         </div>
@@ -208,7 +210,7 @@ class Dashboard {
 
 
 		if ( $file !== false ) {
-			$file = apply_filters( WOWP_Plugin::PREFIX . '_admin_filter_file', $file, $current );
+			$file = apply_filters( WOWP_Plugin::PREFIX . '_admin_filter_file', $file, $current ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.DynamicHooknameFound
 
 			$page_path = DashboardHelper::get_folder_path( 'pages' ) . '/' . $file;
 

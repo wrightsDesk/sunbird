@@ -7,6 +7,7 @@
  * @property {boolean} do_not_track
  * @property {boolean} enable_turbo_mode
  * @property {boolean} track_url_change
+ * @property {boolean} track_external_links
  * @property {string} pageUrl
  * @property {boolean} cookieless
  */
@@ -33,8 +34,11 @@
 // Ensure tracking object exists
 burst.tracking = burst.tracking || {
   isInitialHit: true,
-  lastUpdateTimestamp: 0
+  lastUpdateTimestamp: 0,
+  ajaxUrl: '',
 };
+
+burst.should_load_ecommerce = burst.should_load_ecommerce || false;
 
 // Cache fallback normalizations
 burst.cache = burst.cache || {
@@ -64,9 +68,13 @@ const pageIsRendered = new Promise(resolve => {
     resolve();
   }
 });
-// Import goals if applicable
+// Inject goals script as a regular script tag to avoid CORS issues in headless setups.
+// Dynamic import() enforces CORS; a script tag does not.
 if (burst.goals?.active?.some(goal => !goal.page_url || goal.page_url === '' || goal.page_url === burst.options.pageUrl)) {
-  import(burst.goals.scriptUrl).then(goals => goals.default());
+  const script = document.createElement('script');
+  script.async = true;
+  script.src = burst.goals.scriptUrl;
+  document.head.appendChild(script);
 }
 
 /**
@@ -79,16 +87,33 @@ const burst_get_cookie = name => {
   const ca = document.cookie.split(';');
   for (let c of ca) {
     c = c.trim();
-    if (c.indexOf(nameEQ) === 0) return Promise.resolve(c.substring(nameEQ.length));
+    if (c.indexOf(nameEQ) === 0) {
+      // An empty value counts as absent. Browsers that stored an empty burst_uid
+      // cookie would otherwise keep reading it back as their identifier.
+      const value = c.substring(nameEQ.length);
+      if (value) return Promise.resolve(value);
+    }
   }
   return Promise.reject(false);
 };
+/**
+ * Check if tracking consent is granted via WP Consent API or consent managers.
+ * @returns {boolean}
+ */
+const burst_has_tracking_consent = () => {
+  if (typeof wp_has_consent === 'function') {
+    return wp_has_consent('statistics');
+  }
+  return true;
+};
+
 /**
  * Set a cookie
  * @param name
  * @param value
  */
 const burst_set_cookie = (name, value) => {
+  if (!burst_has_tracking_consent()) return;
   const path = '/';
   let domain = '';
   let secure = location.protocol === 'https:' ? ';secure' : '';
@@ -103,8 +128,11 @@ const burst_set_cookie = (name, value) => {
  * @returns {boolean}
  */
 const burst_use_cookies = () => {
+  if (!burst_has_tracking_consent()) {
+    return false;
+  }
   if (burst.cache.useCookies !== null) return burst.cache.useCookies;
-  const result = navigator.cookieEnabled && !burst.options.cookieless;
+  const result = navigator.cookieEnabled && !burst.options.cookieless && burst.options.privacy_level !== 'private_mode';
   burst.cache.useCookies = result;
   return result;
 };
@@ -123,7 +151,7 @@ function burst_enable_cookies() {
  * @returns {Promise}
  */
 const burst_uid = () => {
-  if (burst.cache.uid !== null) return Promise.resolve(burst.cache.uid);
+  if (burst.cache.uid) return Promise.resolve(burst.cache.uid);
   return burst_get_cookie('burst_uid').then(cookie_uid => {
     burst.cache.uid = cookie_uid;
     return cookie_uid;
@@ -136,23 +164,93 @@ const burst_uid = () => {
 };
 /**
  * Generate a random string
+ *
+ * Built with a plain loop on purpose. Legacy libraries that themes still load
+ * (Prototype, MooTools) overwrite Array.from with a single-argument version
+ * that silently ignores the map callback, which turned this into an empty
+ * string and left every visitor on such a site without an identifier.
+ *
  * @returns {string}
  */
 const burst_generate_uid = () => {
-  return Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join(''); // nosemgrep
+  let uid = '';
+  for (let i = 0; i < 32; i++) {
+    uid += Math.floor(Math.random() * 16).toString(16); // nosemgrep
+  }
+  return uid;
 };
-
 
 const burst_fingerprint = () => {
   if (burst.cache.fingerprint !== null) return Promise.resolve(burst.cache.fingerprint);
-  const tests = [
-    'availableScreenResolution', 'canvas', 'colorDepth', 'cookies', 'cpuClass', 'deviceDpi', 'doNotTrack',
-    'indexedDb', 'language', 'localStorage', 'pixelRatio', 'platform', 'plugins', 'processorCores',
-    'screenResolution', 'sessionStorage', 'timezoneOffset', 'touchSupport', 'userAgent', 'webGl'
-  ];
-  return imprint.test(tests).then(fingerprint => {
-    burst.cache.fingerprint = fingerprint;
-    return fingerprint;
+  const tm = new ThumbmarkJS.Thumbmark({
+    exclude: [],
+
+    permissions_to_check: [
+      'geolocation',
+      'notifications',
+      'camera',
+      'microphone',
+      'gyroscope',
+      'accelerometer',
+      'magnetometer',
+      'ambient-light-sensor',
+      'background-sync',
+      'persistent-storage'
+    ]
+  });
+
+  return tm.get().then(result => {
+    let baseFingerprint = result.thumbmark;
+
+    const extraEntropy = [
+      // Screen details
+      screen.availWidth + 'x' + screen.availHeight,
+      screen.width + 'x' + screen.height,
+      screen.colorDepth,
+      window.devicePixelRatio || 1,
+
+      // System info
+      navigator.hardwareConcurrency || 0,
+      navigator.deviceMemory || 0,
+      navigator.maxTouchPoints || 0,
+      new Date().getTimezoneOffset(),
+
+      // Browser capabilities
+      navigator.cookieEnabled ? '1' : '0',
+      typeof(Storage) !== 'undefined' ? '1' : '0',
+      typeof(indexedDB) !== 'undefined' ? '1' : '0',
+      navigator.onLine ? '1' : '0',
+      navigator.languages ? navigator.languages.slice(0, 3).join(',') : navigator.language,
+
+      // Platform details
+      navigator.platform,
+      navigator.oscpu || '',
+
+      navigator.connection ? navigator.connection.effectiveType || '' : '',
+
+      'ontouchstart' in window ? '1' : '0',
+      typeof window.orientation !== 'undefined' ? '1' : '0',
+      window.screen.orientation ? window.screen.orientation.type || '' : ''
+    ].filter(item => item !== '').join('|');
+
+    const combinedData = baseFingerprint + '|' + extraEntropy;
+
+    let hash = 0;
+    for (let i = 0; i < combinedData.length; i++) {
+      const char = combinedData.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash;
+    }
+
+    const hashHex = Math.abs(hash).toString(16).padStart(8, '0');
+    const finalFingerprint = hashHex + baseFingerprint.substring(8);
+
+    burst.cache.fingerprint = finalFingerprint;
+    return finalFingerprint;
+
+  }).catch(error => {
+    console.error(error);
+    return null;
   });
 };
 
@@ -182,24 +280,93 @@ const burst_is_do_not_track = () => {
     return false;
   }
     // check for doNotTrack and globalPrivacyControl headers
-  const result = '1' === navigator.doNotTrack || 
-                 'yes' === navigator.doNotTrack ||
-                 '1' === navigator.msDoNotTrack || 
-                 '1' === window.doNotTrack || 
-                 1 === navigator.globalPrivacyControl;    
+  const result =
+		"1" === navigator.doNotTrack ||
+		"yes" === navigator.doNotTrack ||
+		"1" === navigator.msDoNotTrack ||
+		"1" === window.doNotTrack ||
+		1 === navigator.globalPrivacyControl;
   burst.cache.isDoNotTrack = result;
   return result;
 };
+/**
+ * Debug is enabled by the localized option (BURST_DEBUG) or at runtime by the
+ * auto debug window inline flag, which can override a debug value baked into
+ * the combined script file.
+ * @returns {boolean}
+ */
+const burst_debug_enabled = () => !!( burst.options.debug || window.burst_debug );
+
+const burst_log_tracking_error = ({ status = 0, error = '', data = {} }) => {
+  if ( !burst_debug_enabled() || !burst.tracking.ajaxUrl ) {
+    return;
+  }
+
+  // Report at most one error per browser session: when tracking is down every
+  // pageview fails, and each report is a full admin-ajax request.
+  try {
+    if ( sessionStorage.getItem( 'burst_error_reported' ) ) {
+      return;
+    }
+    sessionStorage.setItem( 'burst_error_reported', '1' );
+  } catch ( e ) {
+    // sessionStorage unavailable; report anyway.
+  }
+
+  fetch(burst.tracking.ajaxUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      action: 'burst_tracking_error',
+      status,
+      error,
+      data: data
+    })
+  });
+};
+
+const burst_beacon_request = (payload) => {
+  const blob = new Blob([payload], { type: 'application/json' });
+  if ( burst_debug_enabled() ) {
+    fetch( burst.tracking.beacon_url, {
+      method: 'POST',
+      body: blob,
+      keepalive: true,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    })
+        .then(response => {
+          if (!response.ok) {
+              burst_log_tracking_error({
+                status: 0,
+                error: 'sendBeacon failed',
+                data: payload
+              });
+          }
+        })
+        .catch(error => {
+          burst_log_tracking_error({
+            status: 0,
+            error: error?.message || 'sendBeacon failed',
+            data: payload
+          });
+        });
+  } else {
+    navigator.sendBeacon(burst.tracking.beacon_url, blob);
+  }
+}
+
 /**
  * Make a XMLHttpRequest and return a promise
  * @param obj
  * @returns {Promise<unknown>}
  */
 const burst_api_request = obj => {
+  const payload = JSON.stringify(obj.data || {});
   return new Promise(resolve => {
     if (burst.options.beacon_enabled) {
-      const blob = new Blob([JSON.stringify(obj.data)], { type: 'application/json' });
-      navigator.sendBeacon(burst.tracking.beacon_url, blob);
+      burst_beacon_request(payload);
       resolve({ status: 200, data: 'ok' });
     } else {
       const token = Math.random().toString(36).substring(2, 9);// nosemgrep
@@ -207,12 +374,24 @@ const burst_api_request = obj => {
         path: `/burst/v1/track/?token=${token}`,
         keepalive: true,
         method: 'POST',
-        data: obj.data
+        data: payload,
       }).then(res => {
         const status = res.status || 200;
         resolve({ status, data: res.data || res });
-      }).catch(() => {
+        if (status !== 200) {
+          burst_log_tracking_error({
+            status,
+            error: 'Non-200 status',
+            data: payload
+          });
+        }
+      }).catch(error => {
         resolve({ status: 200, data: 'ok' });
+        burst_log_tracking_error({
+          status: 0,
+          error: error?.message || 'Burst tracking request failed',
+          data: payload
+        });
       });
     }
   });
@@ -222,59 +401,88 @@ const burst_api_request = obj => {
  * Mostly used for updating time spent on a page
  * Also used for updating the UID (from fingerprint to a cookie)
  */
-async function burst_update_hit(update_uid = false, force = false) {
-  await pageIsRendered;
-  if (burst_is_user_agent() || burst_is_do_not_track()) return;
-  if (burst.tracking.isInitialHit) {
-    burst_track_hit();
-    return;
-  }
+async function burst_update_hit(
+	update_uid = false,
+	force = false,
+	extraData = {},
+) {
+	await pageIsRendered;
+	if (burst_is_user_agent() || burst_is_do_not_track() || !burst_has_tracking_consent()) return;
+	if (burst.tracking.isInitialHit) {
+		burst_track_hit(extraData);
+		return;
+	}
 
-  // If we don't force the update, we only update the hit if 300ms have passed since the last update
-  if (!force && Date.now() - burst.tracking.lastUpdateTimestamp < 300) return;
+	// If we don't force the update, we only update the hit if 300ms have passed since the last update
+	if (!force && Date.now() - burst.tracking.lastUpdateTimestamp < 300) return;
 
-  document.dispatchEvent(new CustomEvent('burst_before_update_hit', { detail: burst }));
+	document.dispatchEvent(
+		new CustomEvent("burst_before_update_hit", { detail: burst }),
+	);
 
-  const [time, id] = await Promise.all([
-    burst_get_time_on_page(),
-    update_uid ? Promise.all([burst_uid(), burst_fingerprint()]) : (burst_use_cookies() ? burst_uid() : burst_fingerprint())
-  ]);
+	const [time, id] = await Promise.all([
+		burst_get_time_on_page(),
+		burst.options.privacy_level === 'private_mode'
+			? Promise.resolve(update_uid ? [false, false] : false)
+			: update_uid
+				? Promise.all([burst_uid(), burst_fingerprint()])
+				: burst_use_cookies()
+					? burst_uid()
+					: burst_fingerprint(),
+	]);
 
-  const data = {
-    fingerprint: update_uid ? id[1] : (burst_use_cookies() ? false : id),
-    uid: update_uid ? id[0] : (burst_use_cookies() ? id : false),
-    url: location.href,
-    time_on_page: time,
-    completed_goals: burst.goals.completed
-  };
+	const data = {
+		fingerprint: update_uid ? id[1] : burst_use_cookies() ? false : id,
+		uid: update_uid ? id[0] : burst_use_cookies() ? id : false,
+		url: location.href,
+		time_on_page: time,
+		completed_goals: burst.goals.completed,
+		should_load_ecommerce: burst.should_load_ecommerce,
+		...extraData,
+	};
 
-  if (time > 0 || data.uid !== false) {
-    await burst_api_request({ data: JSON.stringify(data) });
-    burst.tracking.lastUpdateTimestamp = Date.now();
-  }
+	if (time > 0 || data.uid !== false) {
+		await burst_api_request({ data: data });
+		burst.tracking.lastUpdateTimestamp = Date.now();
+	}
 }
 /**
  * Track a hit
  *
  */
-async function burst_track_hit() {
+async function burst_track_hit(extraData = {}) {
+  const isInitialHit = burst.tracking.isInitialHit;
+  burst.tracking.isInitialHit = false;
   await pageIsRendered;
-  if (!burst.tracking.isInitialHit) {
-    burst_update_hit();
+  if ( !isInitialHit ) {
+    burst_update_hit(false, false, extraData);
     return;
   }
-  if (burst_is_user_agent() || burst_is_do_not_track()) return;
+  if (burst_is_user_agent() || burst_is_do_not_track() || !burst_has_tracking_consent()) return;
 
-  burst.tracking.isInitialHit = false;
   if (Date.now() - burst.tracking.lastUpdateTimestamp < 300) return;
 
   document.dispatchEvent(new CustomEvent('burst_before_track_hit', { detail: burst }));
 
   const [time, id] = await Promise.all([
     burst_get_time_on_page(),
-    burst_use_cookies() ? burst_uid() : burst_fingerprint()
+    burst.options.privacy_level === 'private_mode'
+      ? Promise.resolve(false)
+      : burst_use_cookies() ? burst_uid() : burst_fingerprint()
   ]);
 
+  //wait for body document to resolve.
+  let attempts = 0;
+  const maxAttempts = 200; // 200 * 2ms = 400ms max, 2ms should be enough to get the body in almost all cases.
+  while ( !document.body && attempts++ < maxAttempts ) {
+    await new Promise(resolve => setTimeout(resolve, 2));
+  }
+
+  if ( !document.body ) {
+    console.warn('Burst: missing page_id attribute, not able to resolve body element.');
+  }
+
+  const burstSearchParams = new URLSearchParams(location.search);
   const data = {
     uid: burst_use_cookies() ? id : false,
     fingerprint: burst_use_cookies() ? false : id,
@@ -283,11 +491,16 @@ async function burst_track_hit() {
     user_agent: navigator.userAgent || 'unknown',
     device_resolution: `${window.screen.width * window.devicePixelRatio}x${window.screen.height * window.devicePixelRatio}`,
     time_on_page: time,
-    completed_goals: burst.goals.completed
+    completed_goals: burst.goals.completed,
+    page_id: document.body?.dataset?.burst_id ?? document.body?.dataset?.b_id ?? 0,
+    page_type: document.body?.dataset?.burst_type ?? document.body?.dataset?.b_type ?? '',
+    should_load_ecommerce: burst.should_load_ecommerce,
+    search_term: burstSearchParams.get('s') || '',
+    ...extraData,
   };
 
   document.dispatchEvent(new CustomEvent('burst_track_hit', { detail: data }));
-  await burst_api_request({ method: 'POST', data: JSON.stringify(data) });
+  await burst_api_request({ method: 'POST', data: data });
   burst.tracking.lastUpdateTimestamp = Date.now();
 }
 /**
@@ -314,21 +527,68 @@ function burst_init_events() {
     burst_track_hit();
   };
 
+  const getExternalLinkUrl = (anchorElement) => {
+		const href = anchorElement?.getAttribute?.("href");
+		if (!href || href.startsWith("#")) return false;
+
+		let targetUrl;
+		try {
+			targetUrl = new URL(anchorElement.href, window.location.href);
+		} catch (error) {
+			return false;
+		}
+
+		if (!["http:", "https:"].includes(targetUrl.protocol)) return false;
+		if (targetUrl.origin === window.location.origin) return false;
+
+		return targetUrl.href;
+	};
+
+	const shouldWaitForNavigation = (event, anchorElement) => {
+		if (event.defaultPrevented) return false;
+		if (event.button !== 0) return false;
+		if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+			return false;
+		if (anchorElement.hasAttribute("download")) return false;
+
+		const linkTarget = (
+			anchorElement.getAttribute("target") || ""
+		).toLowerCase();
+		return !linkTarget || linkTarget === "_self";
+	};
+
   // Handle external link clicks for Elementor loading animations/lazy loading
   const handleExternalLinkClick = (e) => {
-    const target = e.target.closest('a');
+    const target = e.target.closest("a[href]");
     if (!target) return;
-    
-    // Check if this element is part of a goal
-    const isGoalElement = burst.goals?.active?.some(goal => {
-      if (goal.type !== 'clicks') return false;
-      return target.closest(goal.selector);
-    });
 
-    // Only update hit if it's not a goal element, as the goal will be tracked by the goal tracker
-    if (!isGoalElement) {
-      burst_update_hit(false, false);
-    }
+    if (!burst.options.track_external_links) return;
+
+		const externalLinkUrl = getExternalLinkUrl(target);
+		if (!externalLinkUrl) return;
+
+		const trackingPayload = {
+			external_link_url: externalLinkUrl,
+		};
+
+		if (burst.options.beacon_enabled || !shouldWaitForNavigation(e, target)) {
+			burst_update_hit(false, true, trackingPayload);
+			return;
+		}
+
+    e.preventDefault();
+		const fallbackTimeoutMs = 250;
+		let didNavigate = false;
+		const navigate = () => {
+			if (didNavigate) return;
+			didNavigate = true;
+			window.location.assign(target.href);
+		};
+
+		setTimeout(navigate, fallbackTimeoutMs);
+		burst_update_hit(false, true, trackingPayload).finally(navigate);
+
+    return;
   };
 
   // Attach event handlers
@@ -336,7 +596,10 @@ function burst_init_events() {
     if (document.readyState !== 'loading') {
       burst_track_hit();
     } else {
-      document.addEventListener('load', burst_track_hit);
+      // Note: 'load' does not fire on document (only on window), so listen for
+      // DOMContentLoaded, which fires as soon as parsing completes - the same
+      // moment a deferred script would have run.
+      document.addEventListener('DOMContentLoaded', burst_track_hit, { once: true });
     }
   } else {
     burst_track_hit();
@@ -369,6 +632,7 @@ function burst_init_events() {
 document.addEventListener('wp_listen_for_consent_change', e => {
   const changed = e.detail;
   if (changed.statistics === 'allow') {
+    burst.cache.useCookies = null;
     burst_init_events();
   }
 });

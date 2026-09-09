@@ -18,9 +18,9 @@ use WP_Defender\Traits\Country;
 use WP_Defender\Behavior\WPMUDEV;
 use WP_Defender\Model\Lockout_Ip;
 use WP_Defender\Traits\Continent;
-use WP_Defender\Controller\Firewall;
 use WP_Defender\Component\Blacklist_Lockout;
 use MaxMind\Db\Reader\InvalidDatabaseException;
+use WP_Defender\Component\Network_Cron_Manager;
 use WP_Defender\Integrations\MaxMind_Geolocation;
 use WP_Defender\Component\Config\Config_Hub_Helper;
 use WP_Defender\Model\Setting\Blacklist_Lockout as Model_Blacklist_Lockout;
@@ -65,15 +65,24 @@ class Blacklist extends Controller {
 		$this->service = wd_di()->get( Blacklist_Lockout::class );
 		add_action( 'wd_blacklist_this_ip', array( $this, 'blacklist_an_ip' ) );
 		// Update MaxMind's DB.
-		if ( ! empty( $this->model->maxmind_license_key ) ) {
-			if ( ! wp_next_scheduled( 'wpdef_update_geoip' ) ) {
-				wp_schedule_event( strtotime( 'next Thursday' ), 'weekly', 'wpdef_update_geoip' );
-			}
+		if ( '' !== $this->model->maxmind_license_key ) {
 			// @since 2.8.0 Allows update or remove the database of MaxMind automatic and periodically (MaxMind's TOS).
-			$bind_updater = (bool) apply_filters( 'wd_update_maxmind_database', true );
-			// Bind to the scheduled updater action.
+			$bind_updater = apply_filters( 'wd_update_maxmind_database', true );
+			$bind_updater = is_bool( $bind_updater ) ? $bind_updater : (bool) $bind_updater;
+
 			if ( $bind_updater ) {
-				add_action( 'wpdef_update_geoip', array( $this, 'update_database' ) );
+				/**
+				 * Network Cron Manager
+				 *
+				 * @var Network_Cron_Manager $network_cron_manager
+				 */
+				$network_cron_manager = wd_di()->get( Network_Cron_Manager::class );
+				$network_cron_manager->register_callback(
+					'wpdef_update_geoip',
+					array( $this, 'update_database' ),
+					WEEK_IN_SECONDS,
+					'next Thursday'
+				);
 			}
 		}
 	}
@@ -87,6 +96,9 @@ class Blacklist extends Controller {
 	 */
 	public function blacklist_an_ip( string $ip ): void {
 		$this->model->add_to_list( $ip, 'blocklist' );
+		if ( defender_is_wp_org_version() ) {
+			\WP_Defender\Component\Rate::run_counter_of_ip_lockouts();
+		}
 	}
 
 	/**
@@ -99,7 +111,6 @@ class Blacklist extends Controller {
 		if ( ! $this->is_page_active() ) {
 			return;
 		}
-		wp_localize_script( 'def-iplockout', 'blacklist', $this->data_frontend() );
 	}
 
 	/**
@@ -135,20 +146,22 @@ class Blacklist extends Controller {
 			$current_country[] = $this->get_current_country( $ip );
 		}
 
+		$misc = array(
+			'user_ip'                        => implode( ', ', $user_ip ),
+			'is_geodb_downloaded'            => $exist_geodb,
+			'blacklist_countries'            => $blacklist_countries,
+			'whitelist_countries'            => $whitelist_countries,
+			'current_country'                => $current_country,
+			'no_ips'                         => '' === $arr_model['ip_blacklist'] && '' === $arr_model['ip_whitelist'],
+			'countries_with_continents_list' => $countries_with_continents_list,
+			'geodb_license_key'              => $this->mask_license_key( $this->model->maxmind_license_key ),
+			'module_name'                    => Model_Blacklist_Lockout::get_module_name(),
+		);
+
 		return array_merge(
 			array(
 				'model' => $arr_model,
-				'misc'  => array(
-					'user_ip'                        => implode( ',', $user_ip ),
-					'is_geodb_downloaded'            => $exist_geodb,
-					'blacklist_countries'            => $blacklist_countries,
-					'whitelist_countries'            => $whitelist_countries,
-					'current_country'                => $current_country,
-					'no_ips'                         => '' === $arr_model['ip_blacklist'] && '' === $arr_model['ip_whitelist'],
-					'countries_with_continents_list' => $countries_with_continents_list,
-					'geodb_license_key'              => $this->mask_license_key( $this->model->maxmind_license_key ),
-					'module_name'                    => Model_Blacklist_Lockout::get_module_name(),
-				),
+				'misc'  => $misc,
 			),
 			$this->dump_routes_and_nonces()
 		);
@@ -162,7 +175,7 @@ class Blacklist extends Controller {
 	 * @return string The masked license key.
 	 */
 	private function mask_license_key( $maxmind_license_key ): string {
-		if ( ! is_string( $maxmind_license_key ) || empty( $maxmind_license_key ) ) {
+		if ( ! is_string( $maxmind_license_key ) || '' === $maxmind_license_key ) {
 			return $maxmind_license_key;
 		}
 		// Get the length of the license key.
@@ -216,6 +229,8 @@ class Blacklist extends Controller {
 				),
 			)
 		);
+		$data           = $this->remove_country_list_conflicts( $data );
+
 		$this->model->import( $data );
 		if ( $this->model->validate() ) {
 			$this->model->save();
@@ -243,8 +258,6 @@ class Blacklist extends Controller {
 			Config_Hub_Helper::set_clear_active_flag();
 		}
 
-		$this->model->import( $data );
-
 		return new Response(
 			false,
 			array_merge(
@@ -252,6 +265,42 @@ class Blacklist extends Controller {
 				$this->data_frontend()
 			)
 		);
+	}
+
+	/**
+	 * Prevent the same country from being saved in both blocked and allowed lists.
+	 *
+	 * @param array $data Settings data.
+	 *
+	 * @return array
+	 */
+	private function remove_country_list_conflicts( array $data ): array {
+		if ( ! isset( $data['country_blacklist'], $data['country_whitelist'] ) ) {
+			return $data;
+		}
+
+		$country_blacklist = array_values( array_unique( $data['country_blacklist'] ) );
+		$country_whitelist = array_values( array_unique( $data['country_whitelist'] ) );
+		$added_blacklist   = array_diff( $country_blacklist, $this->model->country_blacklist );
+		$added_whitelist   = array_diff( $country_whitelist, $this->model->country_whitelist );
+
+		if ( array() !== $added_blacklist ) {
+			$country_whitelist = array_values( array_diff( $country_whitelist, $added_blacklist ) );
+		}
+
+		if ( array() !== $added_whitelist ) {
+			$country_blacklist = array_values( array_diff( $country_blacklist, $added_whitelist ) );
+		}
+
+		$remaining_conflicts = array_intersect( $country_blacklist, $country_whitelist );
+		if ( array() !== $remaining_conflicts ) {
+			$country_whitelist = array_values( array_diff( $country_whitelist, $remaining_conflicts ) );
+		}
+
+		$data['country_blacklist'] = $country_blacklist;
+		$data['country_whitelist'] = $country_whitelist;
+
+		return $data;
 	}
 
 	/**
@@ -293,7 +342,7 @@ class Blacklist extends Controller {
 
 			foreach ( $this->get_user_ip() as $ip ) {
 				$country = $this->get_current_country( $ip );
-				if ( ! empty( $country ) && ! empty( $country['iso'] ) ) {
+				if ( isset( $country['iso'] ) && '' !== (string) $country['iso'] ) {
 					$this->model = $this->service->add_default_whitelisted_country( $this->model, $country['iso'] );
 				}
 			}
@@ -312,17 +361,21 @@ class Blacklist extends Controller {
 			);
 		} else {
 			$this->log( 'Error from MaxMind: ' . $tmp->get_error_message(), Firewall::FIREWALL_LOG );
-			$string = sprintf(
-			/* translators: 1. License key with link. */
-				esc_html__(
-					'You have entered an invalid %1$s. If you just created the key, please wait 5 minutes before trying to activate it.',
-					'defender-security'
-				),
-				'<a target="_blank" href="https://www.maxmind.com/en/accounts/current/license-key">' . esc_html__( 'license key', 'defender-security' ) . '</a>'
+			$string = esc_html__(
+				'The license key you entered isn\'t valid. If you recently created it, allow up to 5 minutes for activation before trying again.',
+				'defender-security'
 			);
 
 			if ( ( new WPMUDEV() )->show_support_links() ) {
-				$string .= defender_support_ticket_text();
+				$string = sprintf(
+					/* translators: 1. Opening support link, 2. Closing support link. */
+					esc_html__(
+						'The license key you entered isn\'t valid. If you recently created it, allow up to 5 minutes for activation before trying again. Need help? %1$sContact support%2$s.',
+						'defender-security'
+					),
+					'<a target="_blank" href="' . WP_DEFENDER_SUPPORT_LINK . '">',
+					'</a>'
+				);
 			}
 
 			return new Response( false, array( 'invalid_text' => $string ) );
@@ -457,7 +510,7 @@ class Blacklist extends Controller {
 		$bulk_ips = null;
 		$limit    = 50;
 
-		if ( ! empty( $data['ips'] ) ) {
+		if ( isset( $data['ips'] ) && is_string( $data['ips'] ) && '' !== $data['ips'] ) {
 			$ips           = json_decode( $data['ips'] );
 			$first_nth_ips = array_slice( $ips, 0, $limit );
 			$bulk_ips      = wp_list_pluck( $first_nth_ips, 'ip' );
@@ -509,7 +562,7 @@ class Blacklist extends Controller {
 	public function query_locked_ips() {
 		$results    = Lockout_Ip::query_locked_ip();
 		$locked_ips = array();
-		if ( ! empty( $results ) ) {
+		if ( array() !== $results ) {
 			foreach ( $results as $key => $locked_ip ) {
 				$locked_ips[] = array(
 					'id'     => $locked_ip['id'],
@@ -581,7 +634,7 @@ class Blacklist extends Controller {
 	 * @throws Exception If table is not defined.
 	 */
 	public function import_data( array $data ) {
-		if ( ! empty( $data ) ) {
+		if ( array() !== $data ) {
 			// Upgrade for old versions.
 			$data  = $this->adapt_data( $data );
 			$model = $this->model;
@@ -629,18 +682,27 @@ class Blacklist extends Controller {
 				),
 			)
 		);
-		$attached_id = $data['id'];
-		if ( ! is_object( get_post( $attached_id ) ) ) {
-			return new Response(
-				false,
-				array(
-					'message' => esc_html__( 'Your file is invalid!', 'defender-security' ),
-				)
-			);
+		$file        = '';
+		$attached_id = $data['id'] ?? 0;
+		if ( 0 < $attached_id ) {
+			if ( ! is_object( get_post( $attached_id ) ) ) {
+				return new Response(
+					false,
+					array(
+						'message' => esc_html__( 'Your file is invalid!', 'defender-security' ),
+					)
+				);
+			}
+
+			$file = get_attached_file( $attached_id );
+		} else {
+			$file_data = defender_get_data_from_request( 'file', 'f' );
+			if ( is_array( $file_data ) && isset( $file_data['tmp_name'] ) && is_uploaded_file( $file_data['tmp_name'] ) ) {
+				$file = $file_data['tmp_name'];
+			}
 		}
 
-		$file = get_attached_file( $attached_id );
-		if ( ! is_file( $file ) ) {
+		if ( ! is_string( $file ) || '' === $file || ! is_file( $file ) ) {
 			return new Response(
 				false,
 				array(
@@ -666,9 +728,12 @@ class Blacklist extends Controller {
 
 		return new Response(
 			true,
-			array(
-				'message'  => esc_html__( 'Your allowlist/blocklist has been successfully imported.', 'defender-security' ),
-				'interval' => 1,
+			array_merge(
+				array(
+					'message'    => esc_html__( 'Your allowlist/blocklist has been successfully imported.', 'defender-security' ),
+					'auto_close' => true,
+				),
+				$this->data_frontend()
 			)
 		);
 	}
@@ -681,7 +746,7 @@ class Blacklist extends Controller {
 	 * @since 2.8.0
 	 */
 	public function update_database() {
-		if ( empty( $this->model->maxmind_license_key ) ) {
+		if ( '' === $this->model->maxmind_license_key ) {
 			return;
 		}
 

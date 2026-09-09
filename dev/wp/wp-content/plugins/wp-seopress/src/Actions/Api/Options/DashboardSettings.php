@@ -1,84 +1,88 @@
-<?php
+<?php // phpcs:ignore
 
 namespace SEOPress\Actions\Api\Options;
 
-if ( ! defined('ABSPATH')) {
-    exit;
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
 }
 
 use SEOPress\Core\Hooks\ExecuteHooks;
 
+/**
+ * Dashboard Settings
+ */
 class DashboardSettings implements ExecuteHooks {
-    /**
-	 * Current user ID
+	/**
+	 * The Dashboard Settings hooks.
 	 *
-	 * @var int
+	 * @since 5.0.0
 	 */
-    private $current_user = '';
+	public function hooks() {
+		add_action( 'rest_api_init', array( $this, 'register' ) );
+	}
 
-    public function hooks() {
-        $this->current_user = wp_get_current_user()->ID;
-        add_action('rest_api_init', [$this, 'register']);
-    }
+	/**
+	 * The Dashboard Settings permission check.
+	 *
+	 * @param \WP_REST_Request $request The request.
+	 *
+	 * @since 5.5
+	 *
+	 * @return boolean
+	 */
+	public function permissionCheck( \WP_REST_Request $request ) {
+		return current_user_can( seopress_capability( 'manage_options', 'dashboard' ) );
+	}
 
-    /**
-     * @since 5.5
-     *
-     * @return boolean
-     */
-    public function permissionCheck(\WP_REST_Request $request) {
-        $nonce = $request->get_header('x-wp-nonce');
-        if ($nonce && !wp_verify_nonce($nonce, 'wp_rest')) {
-            return false;
-        }
+	/**
+	 * The Dashboard Settings register.
+	 *
+	 * @since 5.5
+	 *
+	 * @return void
+	 */
+	public function register() {
+		register_rest_route(
+			'seopress/v1',
+			'/options/dashboard-settings',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'processGet' ),
+				'permission_callback' => array( $this, 'permissionCheck' ),
+			)
+		);
+	}
 
-        $current_user = $this->current_user ? $this->current_user : wp_get_current_user()->ID;
-        if ( ! user_can( $current_user, 'manage_options' )) {
-            return false;
-        }
+	/**
+	 * The Dashboard Settings process get.
+	 *
+	 * @param \WP_REST_Request $request The request.
+	 *
+	 * @since 5.5
+	 */
+	public function processGet( \WP_REST_Request $request ) {
+		$options = get_option( 'seopress_dashboard_option_name' );
+		$toggles = get_option( 'seopress_toggle' );
+		$notices = get_option( 'seopress_notices' );
 
-        return true;
-    }
+		if ( empty( $options ) && empty( $toggles ) && empty( $notices ) ) {
+			return new \WP_REST_Response( array() );
+		}
 
-    /**
-     * @since 5.5
-     *
-     * @return void
-     */
-    public function register() {
-        register_rest_route('seopress/v1', '/options/dashboard-settings', [
-            'methods'             => 'GET',
-            'callback'            => [$this, 'processGet'],
-            'permission_callback' => [$this, 'permissionCheck'],
-        ]);
-    }
+		$data = array();
 
-    /**
-     * @since 5.5
-     */
-    public function processGet(\WP_REST_Request $request) {
-        $options  = get_option('seopress_dashboard_option_name');
-        $toggles  = get_option('seopress_toggle');
-        $notices  = get_option('seopress_notices');
+		foreach ( $options as $key => $value ) {
+			$data[ $key ] = $value;
+		}
 
-        if (empty($options) && empty($toggles) && empty($notices)) {
-            return;
-        }
+		foreach ( $toggles as $key => $value ) {
+			$data[ $key ] = $value;
+		}
 
-        $data = [];
+		foreach ( $notices as $key => $value ) {
+			$data[ $key ] = $value;
+		}
 
-        foreach($options as $key => $value) {
-            $data[$key] = $value;
-        }
-
-        foreach($toggles as $key => $value) {
-            $data[$key] = $value;
-        }
-
-        foreach($notices as $key => $value) {
-            $data[$key] = $value;
-        }
-
-        return new \WP_REST_Response($data);
-    }
+		return new \WP_REST_Response( $data );
+	}
 }

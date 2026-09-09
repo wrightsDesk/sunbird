@@ -12,6 +12,7 @@ use WP_Defender\Traits\IP;
 use Calotes\Component\Request;
 use Calotes\Component\Response;
 use WP_Defender\Traits\Setting;
+use WP_Defender\Model\Lockout_Log;
 use WP_Defender\Component\Blacklist_Lockout;
 use WP_Defender\Model\Setting\Notfound_Lockout;
 use WP_Defender\Component\Config\Config_Hub_Helper;
@@ -68,7 +69,6 @@ class Nf_Lockout extends Event {
 		if ( ! $this->is_page_active() ) {
 			return;
 		}
-		wp_localize_script( 'def-iplockout', 'nf_lockout', $this->data_frontend() );
 	}
 
 	/**
@@ -81,7 +81,7 @@ class Nf_Lockout extends Event {
 	 */
 	public function save_settings( Request $request ) {
 		$data        = $request->get_data( $this->request_filter_rules() );
-		$old_enabled = (bool) $this->model->enabled;
+		$old_enabled = $this->model->enabled;
 		$prev_data   = $this->model->export();
 
 		$this->model->import( $data );
@@ -127,10 +127,16 @@ class Nf_Lockout extends Event {
 	 * @return array An array of data for the frontend.
 	 */
 	public function data_frontend(): array {
+		$summary = Lockout_Log::get_summary();
+
 		return array_merge(
 			array(
 				'model' => $this->model->export(),
-				'misc'  => array( 'module_name' => Notfound_Lockout::get_module_name() ),
+				'misc'  => array(
+					'module_name'    => Notfound_Lockout::get_module_name(),
+					'hits_today'     => (int) ( $summary['lockout_404_today'] ?? 0 ),
+					'lockouts_today' => (int) ( $summary['lockout_404_today'] ?? 0 ),
+				),
 			),
 			$this->dump_routes_and_nonces()
 		);
@@ -194,7 +200,7 @@ class Nf_Lockout extends Event {
 	 * @param  array $data  Data to be imported into the model.
 	 */
 	public function import_data( array $data ) {
-		if ( ! empty( $data ) ) {
+		if ( array() !== $data ) {
 			$data  = $this->adapt_data( $data );
 			$model = $this->model;
 			$model->import( $data );

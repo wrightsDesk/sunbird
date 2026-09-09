@@ -7,6 +7,8 @@ use JFB_Modules\Validation\Ssr;
 use Jet_Form_Builder\Exceptions\Repository_Exception;
 use JFB_Components\Repository\Repository_Pattern_Trait;
 use JFB_Modules\Block_Parsers\Field_Data_Parser;
+use JFB_Modules\Validation\Handlers\Validation_Handler;
+use Jet_Form_Builder\Request\Request_Tools;
 
 // If this file is called directly, abort.
 if ( ! defined( 'WPINC' ) ) {
@@ -17,18 +19,121 @@ class Server_Side_Rule extends Rule {
 
 	use Repository_Pattern_Trait;
 
+	/**
+	 * Blacklist of dangerous functions that should never be allowed as callbacks.
+	 * All values MUST be lowercase for case-insensitive comparison.
+	 *
+	 * @since 3.5.6.2 Security fix: expanded list and case-insensitive check
+	 */
 	const NOT_ALLOWED = array(
+		// Debug/output functions
 		'var_dump',
 		'var_export',
 		'print_r',
 		'sprintf',
 		'printf',
+		// Command execution
 		'shell_exec',
 		'system',
 		'exec',
+		'passthru',
+		'proc_open',
+		'popen',
+		'pcntl_exec',
+		'proc_nice',
+		'proc_terminate',
+		'proc_close',
+		// Code execution
+		'eval',
+		'assert',
+		'create_function',
+		'call_user_func',
+		'call_user_func_array',
+		'preg_replace_callback',
+		'array_map',
+		'array_filter',
+		'array_reduce',
+		'usort',
+		'uasort',
+		'uksort',
+		'array_walk',
+		'array_walk_recursive',
+		// User mutations
+		'wp_insert_user',
+		'wp_update_user',
+		// File inclusion
+		'include',
+		'include_once',
+		'require',
+		'require_once',
+		// Serialization (object injection)
 		'unserialize',
-		'file_get_contents',
 		'maybe_unserialize',
+		// File operations
+		'file_get_contents',
+		'file_put_contents',
+		'fwrite',
+		'fputs',
+		'fopen',
+		'readfile',
+		'file',
+		'fread',
+		'fgets',
+		'fgetc',
+		'fgetcsv',
+		'fpassthru',
+		'move_uploaded_file',
+		'copy',
+		'rename',
+		'unlink',
+		'rmdir',
+		'mkdir',
+		'chmod',
+		'chown',
+		'chgrp',
+		// Network functions
+		'curl_exec',
+		'curl_multi_exec',
+		'fsockopen',
+		'pfsockopen',
+		'stream_socket_client',
+		'stream_socket_server',
+		// Dangerous PHP functions
+		'parse_str',
+		'extract',
+		'putenv',
+		'ini_set',
+		'ini_alter',
+		'dl',
+		'mail',
+		'header',
+		'setcookie',
+		'setrawcookie',
+		// POSIX functions
+		'posix_kill',
+		'posix_mkfifo',
+		'posix_setpgid',
+		'posix_setsid',
+		'posix_setuid',
+		'posix_setgid',
+		'posix_seteuid',
+		'posix_setegid',
+		// Apache functions
+		'apache_child_terminate',
+		'apache_setenv',
+		// Reflection/class manipulation
+		'get_defined_functions',
+		'get_defined_vars',
+		'get_defined_constants',
+		'phpinfo',
+		'highlight_file',
+		'show_source',
+		'php_strip_whitespace',
+		'get_cfg_var',
+		'get_current_user',
+		'getmyuid',
+		'getmypid',
+		'getenv',
 	);
 
 	public function __construct() {
@@ -57,7 +162,14 @@ class Server_Side_Rule extends Rule {
 
 	public function validate_field( Field_Data_Parser $parser ) {
 		$function_name = $this->get_setting( 'value' );
-		$is_valid      = $this->validate( $parser, $function_name );
+
+		if ( ! $this->validate_submission_signature( $parser ) ) {
+			$parser->collect_error( 'rule:ssr:invalid_signature', $this->get_setting( 'message' ) );
+
+			return;
+		}
+
+		$is_valid = $this->validate( $parser, $function_name );
 
 		if ( $is_valid ) {
 			return;
@@ -81,7 +193,22 @@ class Server_Side_Rule extends Rule {
 			return $this->validate_custom( $parser, $function_name );
 		}
 
-		return $callback->is_valid( $parser->get_value(), $parser->get_context() );
+		return $callback->is_valid_with_parser( $parser );
+	}
+
+	protected function validate_submission_signature( Field_Data_Parser $parser ): bool {
+		$rule_index = $this->get_setting( '_rule_index' );
+
+		if ( false === $rule_index ) {
+			return true;
+		}
+
+		return Validation_Handler::validate_main_signature(
+			Request_Tools::get_request(),
+			jet_fb_handler()->get_form_id(),
+			explode( '.', $parser->get_scoped_name() ),
+			absint( $rule_index )
+		);
 	}
 
 	protected function validate_custom( Field_Data_Parser $parser, string $function_name ): bool {
@@ -94,13 +221,26 @@ class Server_Side_Rule extends Rule {
 		return (bool) call_user_func( $name, $parser->get_value(), $parser->get_context() );
 	}
 
+	/**
+	 * Validate callback function name for security.
+	 *
+	 * @since 3.5.6.2
+	 *
+	 * @param string $function_name The function name to validate.
+	 *
+	 * @return string Empty string if invalid, function name if valid.
+	 */
 	protected function validate_callback( string $function_name ): string {
 		$name = preg_replace( '/[^\w]/i', '', $function_name );
 
-		if ( $name !== $function_name ||
-			// not in the blacklist
-			in_array( $name, self::NOT_ALLOWED, true )
-		) {
+		if ( $name !== $function_name ) {
+			return '';
+		}
+
+		// Case-insensitive blacklist check (PHP function names are case-insensitive)
+		$name_lower = strtolower( $name );
+
+		if ( in_array( $name_lower, self::NOT_ALLOWED, true ) ) {
 			return '';
 		}
 

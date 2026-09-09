@@ -4,7 +4,7 @@
   "name": "mfb/meta-field-block",
   "title": "Meta Field Block",
   "category": "theme",
-  "description": "Display a custom field as a block on the frontend. Supports custom fields for posts, terms, and users. Officially supports ACF, Meta Box, and all text-based meta fields.",
+  "description": "Display custom fields in the Block Editor without coding. It supports ACF, MetaBox, WooCommerce, meta, rest field, shortcode and more.",
   "keywords": [
     "meta",
     "custom",
@@ -86,6 +86,14 @@
         "padding": true
       }
     },
+    "dimensions": {
+      "width": true,
+      "height": true,
+      "__experimentalDefaultControls": {
+        "width": false,
+        "height": false
+      }
+    },
     "__experimentalBorder": {
       "color": true,
       "radius": true,
@@ -118,7 +126,10 @@
     "postId",
     "postType",
     "queryId",
-    "query"
+    "query",
+    "termId",
+    "taxonomy",
+    "termQuery"
   ],
   "textdomain": "display-a-meta-field-as-block",
   "editorScript": "file:./index.js",

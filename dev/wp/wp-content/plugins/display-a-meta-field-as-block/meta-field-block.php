@@ -3,10 +3,10 @@
 /**
  * Plugin Name:       Meta Field Block
  * Plugin URI:        https://metafieldblock.com?utm_source=MFB&utm_campaign=MFB+visit+site&utm_medium=link&utm_content=Plugin+URI
- * Description:       Display a custom field as a block on the front end. It supports custom fields for posts, terms, and users. It supports ACF fields explicitly.
- * Requires at least: 6.7
- * Requires PHP:      7.4
- * Version:           1.4.3
+ * Description:       A single block to display custom fields in the Block Editor. It supports ACF, MetaBox, WooCommerce, meta, rest field, shortcode and more.
+ * Requires at least: 6.9
+ * Requires PHP:      8.0
+ * Version:           1.5.4
  * Author:            Phi Phan
  * Author URI:        https://metafieldblock.com?utm_source=MFB&utm_campaign=MFB+visit+site&utm_medium=link&utm_content=Author+URI
  * License:           GPL-3.0
@@ -24,7 +24,7 @@ if ( function_exists( __NAMESPACE__ . '\\mfb_fs' ) ) {
     return;
 }
 // Include Freemius functions.
-require_once dirname( __FILE__ ) . '/freemius.php';
+require_once __DIR__ . '/freemius.php';
 if ( !class_exists( MetaFieldBlock::class ) ) {
     /**
      * The main class
@@ -35,7 +35,7 @@ if ( !class_exists( MetaFieldBlock::class ) ) {
          *
          * @var String
          */
-        protected $version = '1.4.3';
+        protected $version = '1.5.4';
 
         /**
          * Components
@@ -110,24 +110,22 @@ if ( !class_exists( MetaFieldBlock::class ) ) {
          */
         public function register_components() {
             // Load & register core components.
-            $this->include_file( 'includes/rest-fields.php' );
-            $this->include_file( 'includes/acf-fields.php' );
-            $this->include_file( 'includes/mb-fields.php' );
-            $this->include_file( 'includes/dynamic-field.php' );
-            $this->include_file( 'includes/freemius-config.php' );
-            $this->include_file( 'includes/settings.php' );
-            $core_components = [
-                RestFields::class,
-                ACFFields::class,
-                MBFields::class,
-                DynamicField::class,
-                Settings::class,
-                FreemiusConfig::class
+            $components = [
+                'includes/loop-context.php'    => LoopContext::class,
+                'includes/meta-visibility.php' => MetaVisibility::class,
+                'includes/rest-fields.php'     => RestFields::class,
+                'includes/acf-fields.php'      => ACFFields::class,
+                'includes/mb-fields.php'       => MBFields::class,
+                'includes/dynamic-field.php'   => DynamicField::class,
+                'includes/settings.php'        => Settings::class,
+                'includes/freemius-config.php' => FreemiusConfig::class,
             ];
-            $components = apply_filters( 'meta_field_block_get_components', $core_components );
-            foreach ( $components as $component ) {
-                $this->register_component( $component );
+            foreach ( $components as $file => $classname ) {
+                $this->register_component( $file, $classname );
             }
+            // Register additional components.
+            // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
+            do_action( 'mfb/register_components', $this );
         }
 
         /**
@@ -147,12 +145,10 @@ if ( !class_exists( MetaFieldBlock::class ) ) {
          * @return void
          */
         public function run() {
-            // Load translations.
-            add_action( 'init', [$this, 'load_textdomain'] );
             // Register the block.
             add_action( 'init', [$this, 'register_block'] );
             // Save version and trigger upgraded hook.
-            add_action( 'admin_menu', [$this, 'version_upgrade'], 1 );
+            add_action( 'plugins_loaded', [$this, 'version_upgrade'], 1 );
             // Flush the server cache.
             add_action(
                 'save_post',
@@ -164,15 +160,6 @@ if ( !class_exists( MetaFieldBlock::class ) ) {
             foreach ( $this->components as $component ) {
                 $component->run();
             }
-        }
-
-        /**
-         * Load text domain
-         *
-         * @return void
-         */
-        public function load_textdomain() {
-            load_plugin_textdomain( 'display-a-meta-field-as-block', false, plugin_basename( realpath( __DIR__ . '/languages' ) ) );
         }
 
         /**
@@ -210,43 +197,17 @@ if ( !class_exists( MetaFieldBlock::class ) ) {
             // Is dynamic block?
             $is_dynamic_block = $this->is_dynamic_block( $attributes );
             if ( $is_dynamic_block ) {
-                if ( 'acf' === $field_type ) {
-                    if ( function_exists( 'get_field_object' ) ) {
-                        $block_value = $this->get_component( ACFFields::class )->get_field_value( $field_name, $object_id, $object_type );
-                        $content = $block_value['value'] ?? '';
-                        $content = apply_filters(
-                            '_meta_field_block_render_dynamic_block',
-                            $content,
-                            $block_value,
-                            $object_id,
-                            $object_type,
-                            $attributes,
-                            $block
-                        );
-                    } else {
-                        $content = '<code><em>' . __( 'This data type requires the ACF plugin installed and activated!', 'display-a-meta-field-as-block' ) . '</em></code>';
-                    }
-                } elseif ( 'mb' === $field_type ) {
-                    if ( function_exists( 'rwmb_get_value' ) ) {
-                        $block_value = $this->get_component( MBFields::class )->get_field_value( $field_name, $object_id, $object_type );
-                        $content = $block_value['value'] ?? '';
-                        $content = apply_filters(
-                            '_meta_field_block_render_dynamic_block',
-                            $content,
-                            $block_value,
-                            $object_id,
-                            $object_type,
-                            $attributes,
-                            $block
-                        );
-                    } else {
-                        $content = '<code><em>' . __( 'This data type requires the Meta Box plugin installed and activated!', 'display-a-meta-field-as-block' ) . '</em></code>';
-                    }
-                } else {
+                if ( in_array( $field_type, [
+                    'meta',
+                    'dynamic',
+                    'rest_field',
+                    'option'
+                ], true ) ) {
                     if ( in_array( $object_type, ['post', 'term', 'user'], true ) ) {
                         $get_meta_callback = "get_{$object_type}_meta";
                         $content = $get_meta_callback( $object_id, $field_name, true );
                     } else {
+                        // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
                         $content = apply_filters(
                             '_meta_field_block_get_field_value_other_type',
                             $content,
@@ -257,6 +218,7 @@ if ( !class_exists( MetaFieldBlock::class ) ) {
                             $block
                         );
                     }
+                    // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
                     $content = apply_filters(
                         '_meta_field_block_get_field_value',
                         $content,
@@ -266,8 +228,21 @@ if ( !class_exists( MetaFieldBlock::class ) ) {
                         $attributes,
                         $block
                     );
+                } else {
+                    // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
+                    $content = apply_filters(
+                        '_meta_field_block_get_block_content_by_provider',
+                        $content,
+                        $field_name,
+                        $field_type,
+                        $object_id,
+                        $object_type,
+                        $attributes,
+                        $block
+                    );
                 }
             } else {
+                // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
                 $content = apply_filters(
                     '_meta_field_block_render_static_block',
                     $content,
@@ -308,20 +283,32 @@ if ( !class_exists( MetaFieldBlock::class ) ) {
                 if ( false === $cache_data ) {
                     $cache_data = [];
                 }
-                if ( isset( $cache_data[$field_name] ) ) {
-                    $object_type = $cache_data[$field_name];
+                // Get loop context handler.
+                $loop_context_handler = $this->get_component( LoopContext::class );
+                // Get loop context queue.
+                $loop_contexts = $loop_context_handler->get_loop_contexts();
+                $loop_context = ( !empty( $loop_contexts ) ? end( $loop_contexts ) : '' );
+                $taxonomy_loop_blocks = $loop_context_handler->get_taxonomy_query_blocks();
+                $kind = ( $loop_context && in_array( $loop_context, $taxonomy_loop_blocks, true ) ? 'term' : 'post' );
+                $field_name_cache_key = $kind . '_' . $field_name;
+                if ( isset( $cache_data[$field_name_cache_key] ) ) {
+                    $object_type = $cache_data[$field_name_cache_key];
                 } else {
-                    $object_type = 'post';
-                    if ( $this->is_custom_context( $field_name, $block, is_category() || is_tag() || is_tax() ) ) {
+                    if ( $loop_context ) {
+                        $object_type = $kind;
+                    } elseif ( is_category() || is_tag() || is_tax() ) {
                         $object_type = 'term';
-                    } elseif ( $this->is_custom_context( $field_name, $block, is_author() ) ) {
+                    } elseif ( is_author() ) {
                         $object_type = 'user';
+                    } else {
+                        $object_type = 'post';
                     }
                     // Update cache.
-                    $cache_data[$field_name] = $object_type;
+                    $cache_data[$field_name_cache_key] = $object_type;
                     wp_cache_set( $cache_key, $cache_data, 'mfb' );
                 }
             }
+            // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
             return apply_filters(
                 'meta_field_block_get_object_type',
                 $object_type,
@@ -341,20 +328,23 @@ if ( !class_exists( MetaFieldBlock::class ) ) {
          */
         public function get_object_id( $object_type, $attributes, $block ) {
             if ( in_array( $object_type, ['post', 'term', 'user'], true ) && ($attributes['isCustomSource'] ?? false) && ($attributes['objectId'] ?? false) ) {
-                return $attributes['objectId'];
-            }
-            if ( in_array( $object_type, ['term', 'user'], true ) ) {
-                // Get queried object id.
-                $object_id = get_queried_object_id();
-            } else {
-                if ( isset( $block->context['postId'] ) ) {
+                $object_id = $attributes['objectId'];
+            } elseif ( in_array( $object_type, ['term', 'user'], true ) ) {
+                if ( 'term' === $object_type && isset( $block->context['termId'] ) ) {
                     // Get value from the context.
-                    $object_id = $block->context['postId'];
+                    $object_id = $block->context['termId'];
                 } else {
-                    // Fallback to the current queried object id.
+                    // Get queried object id.
                     $object_id = get_queried_object_id();
                 }
+            } elseif ( isset( $block->context['postId'] ) ) {
+                // Get value from the context.
+                $object_id = $block->context['postId'];
+            } else {
+                // Fallback to the current queried object id.
+                $object_id = get_queried_object_id();
             }
+            // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
             return apply_filters(
                 'meta_field_block_get_object_id',
                 $object_id,
@@ -362,79 +352,6 @@ if ( !class_exists( MetaFieldBlock::class ) ) {
                 $attributes,
                 $block
             );
-        }
-
-        /**
-         * Is the field is in a custom context?
-         *
-         * @param string   $field_name
-         * @param WP_Block $block
-         * @param boolean  $condition
-         * @return boolean
-         */
-        private function is_custom_context( $field_name, $block, $condition ) {
-            if ( $condition ) {
-                if ( !isset( $block->context['postId'] ) ) {
-                    return true;
-                } else {
-                    global $_wp_current_template_id, $_wp_current_template_content;
-                    if ( !$_wp_current_template_id || !$_wp_current_template_content ) {
-                        return false;
-                    } else {
-                        // Cache key for the blocks of template.
-                        $cache_key = 'blocks_by_template';
-                        // Build template key.
-                        $template_key = str_replace( '//', '__', $_wp_current_template_id );
-                        // Get from the cache.
-                        $cache_data = wp_cache_get( $cache_key, 'mfb' );
-                        if ( false === $cache_data ) {
-                            $cache_data = [];
-                        }
-                        if ( isset( $cache_data[$template_key] ) ) {
-                            $blocks = $cache_data[$template_key];
-                        } else {
-                            $blocks = \parse_blocks( $_wp_current_template_content );
-                            // Update cache.
-                            if ( !empty( $blocks ) ) {
-                                $cache_data[$template_key] = $blocks;
-                                wp_cache_set( $cache_key, $cache_data, 'mfb' );
-                            }
-                        }
-                        return $this->find_mfb( $field_name, $blocks );
-                    }
-                }
-            }
-            return false;
-        }
-
-        /**
-         * Find MFB not within a core query from an array of blocks
-         *
-         * @param string $field_name
-         * @param array  $blocks
-         * @return boolean
-         */
-        private function find_mfb( $field_name, $blocks ) {
-            $found = false;
-            foreach ( $blocks as $block ) {
-                $block_name = $block['blockName'] ?? '';
-                $query_blocks = apply_filters( 'meta_field_block_get_query_blocks', ['core/query', 'woocommerce/product-collection'] );
-                if ( in_array( $block_name, $query_blocks, true ) ) {
-                    continue;
-                }
-                if ( 'mfb/meta-field-block' === $block_name ) {
-                    if ( $field_name === ($block['attrs']['fieldName'] ?? '') ) {
-                        $found = true;
-                        break;
-                    }
-                } elseif ( !empty( $block['innerBlocks'] ) ) {
-                    $found = $this->find_mfb( $field_name, $block['innerBlocks'] );
-                    if ( $found ) {
-                        break;
-                    }
-                }
-            }
-            return $found;
         }
 
         /**
@@ -462,6 +379,7 @@ if ( !class_exists( MetaFieldBlock::class ) ) {
          */
         public function version_upgrade() {
             if ( get_option( 'mfb_current_version' ) !== $this->version ) {
+                // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
                 do_action( 'mfb_version_upgraded', get_option( 'mfb_current_version' ), $this->version );
                 update_option( 'mfb_current_version', $this->version );
             }
@@ -477,18 +395,20 @@ if ( !class_exists( MetaFieldBlock::class ) ) {
         public function flush_cache( $post_id, $post ) {
             if ( in_array( $post->post_type, ['wp_template', 'wp_template_part'] ) ) {
                 wp_cache_delete( 'object_type', 'mfb' );
-                wp_cache_delete( 'blocks_by_template', 'mfb' );
             }
         }
 
         /**
          * Register component
          *
+         * @param string $file The file path of the component.
          * @param string $classname The class name of the component.
          * @return void
          */
-        public function register_component( $classname ) {
-            $this->components[$classname] = new $classname($this);
+        public function register_component( $file, $classname ) {
+            if ( $this->include_file( $file ) ) {
+                $this->components[$classname] = new $classname($this);
+            }
         }
 
         /**
@@ -515,7 +435,7 @@ if ( !class_exists( MetaFieldBlock::class ) ) {
         }
 
         /**
-         * Retrn file path for file or folder.
+         * Return file path for file or folder.
          *
          * @param string $path file path.
          * @return string
@@ -531,7 +451,15 @@ if ( !class_exists( MetaFieldBlock::class ) ) {
          * @return mixed
          */
         public function include_file( $path ) {
-            return include_once $this->get_file_path( $path );
+            $file_path = $this->get_file_path( $path );
+            if ( !file_exists( $file_path ) ) {
+                if ( $this->is_debug_mode() ) {
+                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+                    error_log( "[MFB]: Missing file: {$file_path}" );
+                }
+                return false;
+            }
+            return include_once $file_path;
         }
 
         /**
@@ -605,6 +533,7 @@ if ( !function_exists( __NAMESPACE__ . '\\meta_field_block_activate' ) ) {
      * @return void
      */
     function meta_field_block_activate() {
+        // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
         do_action( 'meta_field_block_activate' );
     }
 

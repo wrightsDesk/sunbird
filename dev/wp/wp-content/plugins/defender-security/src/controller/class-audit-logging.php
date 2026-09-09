@@ -1,6 +1,6 @@
 <?php
 /**
- * Handles audit logging functionalities .
+ * Handle Audit Logging module.
  *
  * @package WP_Defender\Controller
  */
@@ -20,14 +20,17 @@ use WP_Defender\Traits\Formats;
 use WP_Defender\Component\Audit;
 use WP_Defender\Model\Audit_Log;
 use WP_Defender\Behavior\WPMUDEV;
+use WP_Defender\Component\Network_Cron_Manager;
 use WP_Defender\Model\Notification\Audit_Report;
 use WP_Defender\Component\Config\Config_Hub_Helper;
 use WP_Defender\Model\Setting\Audit_Logging as Model_Audit_Logging;
 
 /**
- * Handles audit logging functionalities .
+ * Handle Audit Logging module.
  */
 class Audit_Logging extends Event {
+
+	public const DEFAULT_PER_PAGE = 10;
 
 	use User;
 	use Formats;
@@ -54,11 +57,18 @@ class Audit_Logging extends Event {
 	public ?Audit $service;
 
 	/**
+	 * Indicates whether the current installation is a pro version.
+	 *
+	 * @var bool
+	 */
+	private $is_pro;
+
+	/**
 	 * Initializes the model and service, registers routes, and sets up scheduled events if the model is active.
 	 */
 	public function __construct() {
 		$this->register_page(
-			esc_html( Model_Audit_Logging::get_module_name() ),
+			esc_html__( 'Audit Log', 'defender-security' ),
 			$this->slug,
 			array( $this, 'main_view' ),
 			$this->parent_slug
@@ -67,44 +77,119 @@ class Audit_Logging extends Event {
 		$this->model   = wd_di()->get( Model_Audit_Logging::class );
 		$this->service = new Audit();
 		$this->register_routes();
-		if ( $this->model->is_active() ) {
+		$this->is_pro = wd_di()->get( WPMUDEV::class )->is_pro();
+		if ( $this->is_active() ) {
 			$this->service->enqueue_event_listener();
 			add_action( 'shutdown', array( $this, 'cache_audit_logs' ) );
-			/**
-			 * We will schedule the time for flush data into cloud.
-			 */
-			if ( ! wp_next_scheduled( 'audit_sync_events' ) ) {
-				wp_schedule_event( time() + 15, 'hourly', 'audit_sync_events' );
-			}
-			add_action( 'audit_sync_events', array( $this, 'sync_events' ) );
 
 			/**
-			 * We will schedule the time to clean up old logs.
+			 * Network Cron Manager
+			 *
+			 * @var Network_Cron_Manager $network_cron_manager
 			 */
-			if ( ! wp_next_scheduled( 'audit_clean_up_logs' ) ) {
-				wp_schedule_event( time(), 'hourly', 'audit_clean_up_logs' );
-			}
-			add_action( 'audit_clean_up_logs', array( $this, 'clean_up_audit_logs' ) );
+			$network_cron_manager = wd_di()->get( Network_Cron_Manager::class );
+			$network_cron_manager->register_callback(
+				'audit_clean_up_logs',
+				array( $this->service, 'audit_clean_up_logs' ),
+				HOUR_IN_SECONDS
+			);
 		}
 	}
 
 	/**
-	 * Sync all the events into cloud, this will happen per hourly basis.
+	 * Is there permission to Pro feature?
 	 *
-	 * @return void
+	 * @return bool
 	 */
-	public function sync_events(): void {
-		$this->service->flush();
+	private function is_active(): bool {
+		return $this->model->is_active();
 	}
 
 	/**
-	 * Clean up all the old logs from the local storage, this will happen per hourly basis.
+	 * Parses a raw request params array, resolves filters, and fetches audit logs.
 	 *
-	 * @return void
-	 * @throws Exception When the $duration cannot be parsed as an interval.
+	 * Accepted keys (all optional except date range):
+	 *   date_from   — date string or empty (defaults to -7 days midnight).
+	 *   date_to     — date string or empty (defaults to today 23:59:59).
+	 *   events      — array of event type strings (also accepts key 'event_type' for CSV route).
+	 *   username    — login name (also accepts key 'term' for CSV route).
+	 *   ip_address  — IP filter string.
+	 *   paged       — page number; pass false for unbounded export.
+	 *
+	 * Returns the resolved user_id via the $user_id out-param so callers can use it for COUNT queries.
+	 *
+	 * @param  array      $params   Raw request data.
+	 * @param  mixed      $paged    Page number or false for all results.
+	 * @param  int|string $user_id  Populated with the resolved user ID (out-param).
+	 * @param  int        $per_page  Number of logs per page.
+	 *
+	 * @return array|\WP_Error
 	 */
-	public function clean_up_audit_logs(): void {
-		$this->service->audit_clean_up_logs();
+	private function fetch_logs( array $params, $paged, &$user_id = '', $per_page = self::DEFAULT_PER_PAGE ) {
+		$date_from_str = $params['date_from'] ?? '';
+		$date_to_str   = $params['date_to'] ?? '';
+		$date_from     = $date_from_str ? $this->date_string_to_timestamp( $date_from_str ) : strtotime( '-7 days midnight' );
+		$date_to       = $date_to_str ? $this->date_string_to_timestamp( $date_to_str, true ) : strtotime( 'today 23:59:59' );
+		$events        = $params['events'] ?? ( isset( $params['event_type'] ) && is_array( $params['event_type'] ) ? $params['event_type'] : array() );
+		$username      = $params['username'] ?? ( $params['term'] ?? '' );
+		$ip_address    = $params['ip_address'] ?? '';
+		$user_id       = '';
+
+		if ( '' !== $username ) {
+			$user = get_user_by( 'login', $username );
+			if ( ! is_object( $user ) ) {
+				// Try matching by display_name or email before giving up.
+				$users = get_users(
+					array(
+						'search'         => '*' . $username . '*',
+						'search_columns' => array( 'display_name' ),
+						'number'         => 1,
+					)
+				);
+				if ( array() === $users ) {
+					return array();
+				}
+				$user_id = $users[0]->ID;
+			} else {
+				$user_id = $user->ID;
+			}
+		}
+
+		return $this->service->fetch( $date_from, $date_to, $events, $user_id, $ip_address, $paged, $per_page );
+	}
+
+	/**
+	 * Prefetches users from a result set then formats each log into an array.
+	 *
+	 * @param  array $result  Array of Audit_Log objects.
+	 *
+	 * @return array
+	 */
+	private function format_log_rows( array $result ): array {
+		$user_ids = array_filter(
+			array_unique( array_column( $result, 'user_id' ) ),
+			static fn ( $user_id ): bool => (int) $user_id > 0
+		);
+		if ( array() !== $user_ids ) {
+			get_users( array( 'include' => $user_ids ) );
+		}
+
+		$logs = array();
+		foreach ( $result as $item ) {
+			$item_user_id = isset( $item->user_id ) ? $item->user_id : 0;
+			$item_user_id = ! is_int( $item_user_id ) ? (int) $item_user_id : $item_user_id;
+			$logs[]       = array_merge(
+				$item->export(),
+				array(
+					'user'        => $this->get_user_display( $item->user_id ),
+					'user_url'    => $item_user_id > 0 ? get_edit_user_link( $item_user_id ) : '',
+					'log_date'    => $this->get_date( $item->timestamp ),
+					'format_date' => $this->format_date_time( $item->timestamp ),
+				)
+			);
+		}
+
+		return $logs;
 	}
 
 	/**
@@ -115,27 +200,17 @@ class Audit_Logging extends Event {
 	 * @defender_route
 	 */
 	public function export_as_csv(): void {
-		$date_from = HTTP::get(
-			'date_from',
-			wp_date( 'Y-m-d H:i:s', strtotime( '-7 days', time() ) )
-		);
-		$date_to   = HTTP::get( 'date_to', wp_date( 'Y-m-d H:i:s', time() ) );
-		// Convert date using timezone.
-		$timezone  = wp_timezone();
-		$date_from = ( new DateTime( $date_from, $timezone ) )->setTime( 0, 0, 0 )->getTimestamp();
-		$date_to   = ( new DateTime( $date_to, $timezone ) )->setTime( 23, 59, 59 )->getTimestamp();
-		$username  = HTTP::get( 'term', '' );
-		$user_id   = '';
-		$user      = get_user_by( 'login', $username );
-		$events    = HTTP::get( 'event_type', array() );
-		if ( is_object( $user ) ) {
-			$user_id = $user->ID;
+		$result = $this->fetch_logs( defender_get_data_from_request( null, 'g' ), false );
+
+		if ( is_wp_error( $result ) ) {
+			wp_send_json_error(
+				array(
+					'message' => $result->get_error_message(),
+				)
+			);
 		}
 
-		$handler    = new Audit();
-		$ip_address = HTTP::get( 'ip_address', '' );
-		$result     = $handler->fetch( $date_from, $date_to, $events, $user_id, $ip_address, false );
-		// WP_Filesystem class doesn’t directly provide a function for opening a stream to php://memory with the 'w' mode.
+		// WP_Filesystem class doesn't directly provide a function for opening a stream to php://memory with the 'w' mode.
 		$fp      = fopen( 'php://memory', 'w' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
 		$headers = array(
 			esc_html__( 'Summary', 'defender-security' ),
@@ -146,17 +221,16 @@ class Audit_Logging extends Event {
 			esc_html__( 'User', 'defender-security' ),
 		);
 		fputcsv( $fp, $headers, ',', '"', '\\' );
-		foreach ( $result as $log ) {
-			$fields = $log->export();
-			$vars   = array(
-				$fields['msg'],
-				is_array( $fields['timestamp'] )
-				? $this->format_date_time( $fields['timestamp'][0] )
-				: $this->format_date_time( $fields['timestamp'] ),
-				$fields['context'],
-				$fields['action_type'],
-				$fields['ip'],
-				$this->get_user_display( $fields['user_id'] ),
+		foreach ( $this->format_log_rows( $result ) as $row ) {
+			$vars = array(
+				$row['msg'],
+				is_array( $row['timestamp'] )
+					? $this->format_date_time( $row['timestamp'][0] )
+					: $this->format_date_time( $row['timestamp'] ),
+				$row['context'],
+				$row['action_type'],
+				$row['ip'],
+				$row['user'],
 			);
 			fputcsv( $fp, $vars, ',', '"', '\\' );
 		}
@@ -219,64 +293,42 @@ class Audit_Logging extends Event {
 					'type'     => 'int',
 					'sanitize' => 'sanitize_text_field',
 				),
+				'per_page'   => array(
+					'type'     => 'int',
+					'sanitize' => 'sanitize_text_field',
+				),
 			)
 		);
-		if ( empty( $data['date_from'] ) || empty( $data['date_to'] ) ) {
+		if ( ! isset( $data['date_from'] ) || ! isset( $data['date_to'] ) ) {
 			return new Response( false, array( 'message' => esc_html__( 'Invalid data.', 'defender-security' ) ) );
 		}
-		// Convert date using timezone.
-		$timezone  = wp_timezone();
-		$date_from = ( new DateTime( $data['date_from'], $timezone ) )
-			->setTime( 0, 0, 0 )
-			->getTimestamp();
-		$date_to   = ( new DateTime( $data['date_to'], $timezone ) )
-			->setTime( 23, 59, 59 )
-			->getTimestamp();
-
-		$events     = $data['events'] ?? array();
-		$ip_address = $data['ip_address'] ?? '';
-		$paged      = $data['paged'] ?? 1;
-		$username   = $data['username'] ?? '';
-		$user_id    = '';
-		if ( ! empty( $username ) ) {
-			$user = get_user_by( 'login', $username );
-			if ( is_object( $user ) ) {
-				$user_id = $user->ID;
-				// Fetch result with the specified user.
-				$result = $this->service->fetch( $date_from, $date_to, $events, $user_id, $ip_address, $paged );
-			} else {
-				// A non-existent username.
-				$result = array();
-			}
-		} else {
-			// Fetch result with empty user field.
-			$result = $this->service->fetch( $date_from, $date_to, $events, $user_id, $ip_address, $paged );
+		// Validate date strings before passing to fetch_logs.
+		$date_from_check = $this->date_string_to_timestamp( $data['date_from'] );
+		$date_to_check   = $this->date_string_to_timestamp( $data['date_to'], true );
+		if ( $date_from_check <= 0 || $date_to_check <= 0 ) {
+			return new Response( false, array( 'message' => esc_html__( 'Invalid data.', 'defender-security' ) ) );
 		}
+
+		$paged    = $data['paged'] ?? 1;
+		$per_page = min( 100, max( 1, (int) ( $data['per_page'] ?? self::DEFAULT_PER_PAGE ) ) );
+		$result   = $this->fetch_logs( $data, $paged, $user_id, $per_page );
 
 		if ( is_wp_error( $result ) ) {
 			return new Response( false, array( 'message' => $result->get_error_message() ) );
 		}
-		$logs = array();
-		if ( ! empty( $result ) ) {
-			foreach ( $result as $item ) {
-				$logs[] = array_merge(
-					$item->export(),
-					array(
-						'user'        => $this->get_user_display( $item->user_id ),
-						'user_url'    => (int) $item->user_id > 0 ? get_edit_user_link( $item->user_id ) : '',
-						'log_date'    => $this->get_date( $item->timestamp ),
-						'format_date' => $this->format_date_time( $item->timestamp ),
-					)
-				);
-			}
-		}
+		$logs = is_array( $result ) && array() !== $result ? $this->format_log_rows( $result ) : array();
+
 		// @since 3.0.0 If no logs then $count = 0.
-		if ( empty( $logs ) ) {
+		// Skip the COUNT query when the result is a partial page — the fetch already told us the total is count($logs).
+		$events     = $data['events'] ?? array();
+		$ip_address = $data['ip_address'] ?? '';
+		if ( array() === $logs ) {
 			$count = 0;
+		} elseif ( count( $logs ) < $per_page ) {
+			$count = ( $paged - 1 ) * $per_page + count( $logs );
 		} else {
-			$count = Audit_Log::count( $date_from, $date_to, $events, $user_id, $ip_address );
+			$count = Audit_Log::count( $date_from_check, $date_to_check, $events, $user_id, $ip_address );
 		}
-		$per_page = 20;
 
 		// Get the count for the submitted data.
 		return new Response(
@@ -316,27 +368,38 @@ class Audit_Logging extends Event {
 
 	/**
 	 * Enqueues scripts and styles for this page.
-	 * Only enqueues assets if the page is active.
 	 */
-	public function enqueue_assets() {
+	public function enqueue_assets(): void {
 		if ( ! $this->is_page_active() ) {
 			return;
 		}
 
-		wp_enqueue_script( 'def-moment', defender_asset_url( '/assets/js/vendor/moment/moment.min.js' ), array(), DEFENDER_VERSION, true );
+		$handle = 'defender-ui-audit-logging';
 		wp_enqueue_script(
-			'def-daterangepicker',
-			defender_asset_url( '/assets/js/vendor/daterangepicker/daterangepicker.js' ),
-			array(),
+			$handle,
+			WP_DEFENDER_BASE_URL . 'assets/js/audit-logging-ui.js',
+			array( 'def-vue', 'def-manifest', 'def-core-ui', 'defender', 'wp-i18n' ),
 			DEFENDER_VERSION,
 			true
 		);
+		wp_set_script_translations( $handle, 'wpdef' );
+
 		wp_localize_script(
-			'def-audit',
-			'audit',
-			$this->data_frontend()
+			$handle,
+			'defenderUIData',
+			array_merge(
+				$this->get_shared_data(),
+				$this->data_frontend()
+			)
 		);
-		wp_enqueue_script( 'def-audit' );
+
+		wp_enqueue_style(
+			$handle,
+			WP_DEFENDER_BASE_URL . 'assets/css/showcase.css',
+			array(),
+			DEFENDER_VERSION
+		);
+
 		$this->enqueue_main_assets();
 	}
 
@@ -357,7 +420,7 @@ class Audit_Logging extends Event {
 	 * @defender_route
 	 */
 	public function summary(): void {
-		$response = $this->model->is_active() ? $this->summary_data() : array();
+		$response = $this->is_active() ? $this->summary_data() : array();
 		wp_send_json_success( $response );
 	}
 
@@ -370,21 +433,28 @@ class Audit_Logging extends Event {
 	 * @throws Exception Emits Exception in case of an error.
 	 */
 	public function summary_data( bool $for_hub = false ): array {
+		$timezone = wp_timezone();
+
 		// Monthly count.
-		$date_from   = ( new DateTime( wp_date( 'Y-m-d', strtotime( '-30 days' ) ) ) )
+		$date_from   = ( new DateTime( '-30 days', $timezone ) )
 			->setTime( 0, 0, 0 )
 			->getTimestamp();
-		$date_to     = ( new DateTime( wp_date( 'Y-m-d' ) ) )->setTime( 23, 59, 59 )->getTimestamp();
+		$date_to     = ( new DateTime( 'now', $timezone ) )
+			->setTime( 23, 59, 59 )
+			->getTimestamp();
 		$month_count = Audit_Log::count( $date_from, $date_to );
+
 		// Weekly count.
-		$date_from  = ( new DateTime( wp_date( 'Y-m-d', strtotime( '-7 days' ) ) ) )
+		$date_from  = ( new DateTime( '-7 days', $timezone ) )
 			->setTime( 0, 0, 0 )
 			->getTimestamp();
 		$week_count = Audit_Log::count( $date_from, $date_to );
+
 		// Daily count. Sync data to the Hub without timezone.
 		$date_from = $for_hub ? new DateTime( 'now' ) : new DateTime( 'now', wp_timezone() );
 		$date_from = $date_from->modify( '-24 hours' )->setTime( 0, 0, 0 )->getTimestamp();
 		$day_count = Audit_Log::count( $date_from, $date_to );
+
 		// Get the last item.
 		$last = Audit_Log::get_last();
 		if ( is_object( $last ) ) {
@@ -400,6 +470,7 @@ class Audit_Logging extends Event {
 			'weekCount'  => $week_count,
 			'dayCount'   => $day_count,
 			'lastEvent'  => $last,
+			'report'     => wd_di()->get( Audit_Report::class )->to_string(),
 		);
 	}
 
@@ -413,10 +484,6 @@ class Audit_Logging extends Event {
 	 */
 	public function save_settings( Request $request ): Response {
 		$data = $request->get_data_by_model( $this->model );
-		if ( false === $data['enabled'] && $data['enabled'] !== $this->model->is_active() ) {
-			// Toggle off, so we need to flush everything to cloud.
-			$this->service->flush();
-		}
 
 		$this->model->import( $data );
 		if ( $this->model->validate() ) {
@@ -432,8 +499,23 @@ class Audit_Logging extends Event {
 				array(
 					'message'    => esc_html__( 'Your settings have been updated.', 'defender-security' ),
 					'auto_close' => true,
+					'model'      => $this->model->export(),
 				)
 			)
+		);
+	}
+
+	/**
+	 * Provides the audit settings data used outside the Audit Logging page.
+	 *
+	 * @return array
+	 */
+	public function settings_data_frontend(): array {
+		return array_merge(
+			array(
+				'model' => $this->model->export(),
+			),
+			$this->dump_routes_and_nonces()
 		);
 	}
 
@@ -445,7 +527,7 @@ class Audit_Logging extends Event {
 	public function to_array(): array {
 		return array_merge(
 			array(
-				'enabled' => $this->model->is_active(),
+				'enabled' => $this->is_active(),
 				'report'  => true,
 			),
 			$this->dump_routes_and_nonces()
@@ -469,7 +551,7 @@ class Audit_Logging extends Event {
 		Array_Cache::remove( 'logs', 'audit' );
 		Array_Cache::remove( 'menu_updated', 'audit' );
 		Array_Cache::remove( 'post_updated', 'audit' );
-		delete_site_option( Audit::CACHE_LAST_CHECKPOINT );
+		delete_site_option( 'wd_audit_fetch_checkpoint' );
 	}
 
 	/**
@@ -481,54 +563,53 @@ class Audit_Logging extends Event {
 	public function data_frontend(): array {
 		$logs       = array();
 		$count      = 0;
-		$per_page   = 20;
+		$per_page   = self::DEFAULT_PER_PAGE;
 		$total_page = 1;
-		if ( $this->model->is_active() ) {
-			$timezone  = wp_timezone();
-			$date_from = ( new DateTime() )->setTimezone( $timezone )
-											->sub( new DateInterval( 'P7D' ) )->setTime( 0, 0, 0 );
-			$date_to   = ( new DateTime() )->setTimezone( $timezone )->setTime( 23, 59, 59 );
-			$result    = $this->service->fetch(
+		if ( $this->is_active() ) {
+			$timezone   = wp_timezone();
+			$date_from  = ( new DateTime( '-7 days', $timezone ) )->setTime( 0, 0, 0 );
+			$date_to    = ( new DateTime( 'now', $timezone ) )->setTime( 23, 59, 59 );
+			$ip_address = sanitize_text_field( defender_get_data_from_request( 'ip', 'g' ) );
+			$result     = $this->service->fetch(
 				$date_from->getTimestamp(),
 				$date_to->getTimestamp(),
 				array(),
 				'',
-				'',
-				1
+				$ip_address,
+				1,
+				$per_page
 			);
 			if ( ! is_wp_error( $result ) ) {
-				foreach ( $result as $item ) {
-					$logs[] = array_merge(
-						$item->export(),
-						array(
-							'user'        => $this->get_user_display( $item->user_id ),
-							'user_url'    => (int) $item->user_id > 0 ? get_edit_user_link( $item->user_id ) : '',
-							'log_date'    => $this->get_date( $item->timestamp ),
-							'format_date' => $this->format_date_time( $item->timestamp ),
-						)
-					);
+				$logs = $this->format_log_rows( $result );
+				// Skip COUNT query when the first page is a partial result — it's cheaper than a second DB round-trip.
+				if ( count( $logs ) < $per_page ) {
+					$count = count( $logs );
+				} else {
+					$count = Audit_Log::count( $date_from->getTimestamp(), $date_to->getTimestamp(), array(), '', $ip_address );
 				}
-				$count      = Audit_Log::count( $date_from->getTimestamp(), $date_to->getTimestamp() );
 				$total_page = ceil( $count / $per_page );
 			}
 		}
 
-		return array_merge(
-			array(
-				'model'       => $this->model->export(),
-				'logs'        => $logs,
-				'events_type' => Audit_Log::allowed_events(),
-				'summary'     => array(
-					'count_7_days' => $count,
-					'report'       => wd_di()->get( Audit_Report::class )->to_string(),
+		return array(
+			'auditLogging' => array_merge(
+				array(
+					'model'       => $this->model->export(),
+					'logs'        => $logs,
+					'events_type' => Audit_Log::allowed_events(),
+					'summary'     => array(
+						'count_7_days' => $count,
+						'report'       => wd_di()->get( Audit_Report::class )->to_string(),
+					),
+					'paging'      => array(
+						'paged'       => 1,
+						'total_pages' => $total_page,
+						'count'       => $count,
+					),
 				),
-				'paging'      => array(
-					'paged'       => 1,
-					'total_pages' => $total_page,
-					'count'       => $count,
-				),
+				$this->dump_routes_and_nonces()
 			),
-			$this->dump_routes_and_nonces()
+			'antibot'      => wd_di()->get( Antibot_Global_Firewall::class )->data_frontend(),
 		);
 	}
 
@@ -541,7 +622,7 @@ class Audit_Logging extends Event {
 	 */
 	public function import_data( array $data ) {
 		$model = $this->model;
-		if ( empty( $data ) ) {
+		if ( array() === $data ) {
 			$model->enabled      = false;
 			$model->storage_days = '6 months';
 			$model->save();
@@ -559,65 +640,36 @@ class Audit_Logging extends Event {
 	 * @return array An array of strings.
 	 */
 	public function export_strings(): array {
-		if ( ! ( new WPMUDEV() )->is_pro() ) {
-			return array(
-				sprintf(
-					/* translators: %s: Html for Pro-tag. */
-					esc_html__( 'Inactive %s', 'defender-security' ),
-					'<span class="sui-tag sui-tag-pro">Pro</span>'
-				),
-			);
-		}
+		$strings = $this->is_active()
+			? array( esc_html__( 'Active', 'defender-security' ) )
+			: array( esc_html__( 'Inactive', 'defender-security' ) );
 
-		if ( $this->model->is_active() ) {
-			$strings      = array( esc_html__( 'Active', 'defender-security' ) );
-			$audit_report = new Audit_Report();
-			if ( 'enabled' === $audit_report->status ) {
-				$strings[] = sprintf(
-					/* translators: %s: Frequency value. */
-					esc_html__( 'Email reports sending %s', 'defender-security' ),
-					$audit_report->frequency
-				);
-			}
-		} else {
-			$strings = array( esc_html__( 'Inactive', 'defender-security' ) );
-		}
+			$strings[] = sprintf(
+				/* translators: %s: Html for Pro-tag. */
+				esc_html__( 'Email report inactive %s', 'defender-security' ),
+				'<span class="sui-tag sui-tag-pro">Pro</span>'
+			);
 
 		return $strings;
 	}
 
 	/**
-	 * Generates configuration strings based on the provided configuration and
-	 * whether the product is a pro version.
+	 * Generates configuration strings based on the provided configuration.
 	 *
 	 * @param  array $config  Configuration data.
-	 * @param  bool  $is_pro  Indicates if the product is a pro version.
 	 *
 	 * @return array Returns an array of configuration strings.
 	 */
-	public function config_strings( array $config, bool $is_pro ): array {
-		if ( $is_pro ) {
-			if ( $config['enabled'] ) {
-				$strings = array( esc_html__( 'Active', 'defender-security' ) );
-				if ( isset( $config['report'] ) && 'enabled' === $config['report'] ) {
-					$strings[] = sprintf(
-						/* translators: %s: Frequency value. */
-						esc_html__( 'Email reports sending %s', 'defender-security' ),
-						$config['frequency']
-					);
-				}
-			} else {
-				$strings = array( esc_html__( 'Inactive', 'defender-security' ) );
-			}
-		} else {
-			$strings = array(
-				sprintf(
-					/* translators: %s: Html for Pro-tag. */
-					esc_html__( 'Inactive %s', 'defender-security' ),
-					'<span class="sui-tag sui-tag-pro">Pro</span>'
-				),
+	public function config_strings( array $config ): array {
+		$strings = $config['enabled']
+			? array( esc_html__( 'Active', 'defender-security' ) )
+			: array( esc_html__( 'Inactive', 'defender-security' ) );
+
+			$strings[] = sprintf(
+				/* translators: %s: Html for Pro-tag. */
+				esc_html__( 'Email report inactive %s', 'defender-security' ),
+				'<span class="sui-tag sui-tag-pro">Pro</span>'
 			);
-		}
 
 		return $strings;
 	}

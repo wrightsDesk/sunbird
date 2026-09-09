@@ -1,79 +1,134 @@
-<?php
+<?php // phpcs:ignore
 
 namespace SEOPress\Actions\Api\Options;
 
-if ( ! defined('ABSPATH')) {
-    exit;
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
 }
 
 use SEOPress\Core\Hooks\ExecuteHooks;
 
+/**
+ * Indexing Settings
+ */
 class IndexingSettings implements ExecuteHooks {
-    /**
-	 * Current user ID
+	/**
+	 * The Indexing Settings hooks.
 	 *
-	 * @var int
+	 * @since 5.0.0
 	 */
-    private $current_user = '';
+	public function hooks() {
+		add_action( 'rest_api_init', array( $this, 'register' ) );
+	}
 
-    public function hooks() {
-        $this->current_user = wp_get_current_user()->ID;
-        add_action('rest_api_init', [$this, 'register']);
-    }
+	/**
+	 * The Indexing Settings permission check.
+	 *
+	 * @param \WP_REST_Request $request The request.
+	 *
+	 * @since 5.5
+	 *
+	 * @return boolean
+	 */
+	public function permissionCheck( \WP_REST_Request $request ) {
+		return current_user_can( seopress_capability( 'manage_options', 'instant_indexing' ) );
+	}
 
-    /**
-     * @since 5.5
-     *
-     * @return boolean
-     */
-    public function permissionCheck(\WP_REST_Request $request) {
-        $nonce = $request->get_header('x-wp-nonce');
-        if ($nonce && !wp_verify_nonce($nonce, 'wp_rest')) {
-            return false;
-        }
+	/**
+	 * The Indexing Settings register.
+	 *
+	 * @since 5.5
+	 *
+	 * @return void
+	 */
+	public function register() {
+		register_rest_route(
+			'seopress/v1',
+			'/options/indexing-settings',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'processGet' ),
+				'permission_callback' => array( $this, 'permissionCheck' ),
+			)
+		);
 
-        $current_user = $this->current_user ? $this->current_user : wp_get_current_user()->ID;
-        if ( ! user_can( $current_user, 'manage_options' )) {
-            return false;
-        }
+		register_rest_route(
+			'seopress/v1',
+			'/options/indexing-settings',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'processPost' ),
+				'permission_callback' => array( $this, 'permissionCheck' ),
+			)
+		);
+	}
 
-        return true;
-    }
+	/**
+	 * The Indexing Settings process post.
+	 *
+	 * @param \WP_REST_Request $request The request.
+	 *
+	 * @since 5.5
+	 *
+	 * @return \WP_REST_Response|\WP_Error
+	 */
+	public function processPost( \WP_REST_Request $request ) {
+		$new_options = $request->get_json_params();
 
-    /**
-     * @since 5.5
-     *
-     * @return void
-     */
-    public function register() {
-        register_rest_route('seopress/v1', '/options/indexing-settings', [
-            'methods'             => 'GET',
-            'callback'            => [$this, 'processGet'],
-            'permission_callback' => [$this, 'permissionCheck'],
-        ]);
-    }
+		if ( empty( $new_options ) || ! is_array( $new_options ) ) {
+			return new \WP_Error(
+				'invalid_data',
+				__( 'Invalid data provided.', 'wp-seopress' ),
+				array( 'status' => 400 )
+			);
+		}
 
-    /**
-     * @since 5.5
-     */
-    public function processGet(\WP_REST_Request $request) {
-        $options  = get_option('seopress_instant_indexing_option_name');
-        $log  = get_option('seopress_instant_indexing_log_option_name');
+		// Sanitize using the same function as PHP form saves.
+		$sanitized_options = seopress_sanitize_options_fields( $new_options );
 
-        if (empty($options) && empty($log)) {
-            return;
-        }
+		update_option( 'seopress_instant_indexing_option_name', $sanitized_options );
 
-        $data = [];
+		do_action( 'seopress_indexing_settings_updated', $sanitized_options );
 
-        foreach($options as $key => $value) {
-            $data[$key] = $value;
-        }
+		return new \WP_REST_Response(
+			array(
+				'success' => true,
+				'message' => __( 'Settings saved successfully.', 'wp-seopress' ),
+				'data'    => $sanitized_options,
+			),
+			200
+		);
+	}
 
-        foreach($log as $key => $value) {
-            $data[$key] = $value;
-        }
+	/**
+	 * The Indexing Settings process get.
+	 *
+	 * @param \WP_REST_Request $request The request.
+	 *
+	 * @since 5.5
+	 */
+	public function processGet( \WP_REST_Request $request ) {
+		$options = get_option( 'seopress_instant_indexing_option_name' );
+		$log     = get_option( 'seopress_instant_indexing_log_option_name' );
 
-        return new \WP_REST_Response($data);
-    }
+		if ( empty( $options ) && empty( $log ) ) {
+			return new \WP_REST_Response( array() );
+		}
+
+		$data = array();
+
+		if ( is_array( $options ) ) {
+			foreach ( $options as $key => $value ) {
+				$data[ $key ] = $value;
+			}
+		}
+
+		if ( is_array( $log ) ) {
+			foreach ( $log as $key => $value ) {
+				$data[ $key ] = $value;
+			}
+		}
+
+		return new \WP_REST_Response( $data );
+	}
 }

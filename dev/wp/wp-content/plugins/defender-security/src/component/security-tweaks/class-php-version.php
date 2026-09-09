@@ -102,21 +102,38 @@ class PHP_Version extends Abstract_Security_Tweaks {
 
 			return;
 		}
-
+		// Ref: https://make.wordpress.org/core/handbook/references/php-compatibility-and-wordpress-versions/.
 		$supported_php    = apply_filters(
 			"defender_{$this->slug}_supported_php",
 			array(
-				'7.4',
 				'8.0',
 				'8.1',
 				'8.2',
+				'8.3',
+				'8.4',
 			)
 		);
 		$this->stable_php = $info['recommended_version'];
-		$position         = array_search( $this->stable_php, $supported_php, true );
 
-		if ( false !== $position && ! empty( $supported_php[ $position ] ) ) {
+		// If the recommended version is lower than plugin's minimum requirement.
+		if ( version_compare( $this->stable_php, WP_DEFENDER_MIN_PHP_VERSION, '<' ) ) {
+			// WordPress may recommend a PHP version older than what plugin requires.
+			// In that case, use plugin's minimum requirement instead.
+			$this->stable_php = WP_DEFENDER_MIN_PHP_VERSION;
+		}
+
+		$position = array_search( $this->stable_php, $supported_php, true );
+
+		if (
+			false !== $position
+			&& isset( $supported_php[ $position ] )
+			&& is_string( $supported_php[ $position ] )
+			&& '' !== $supported_php[ $position ]
+		) {
 			$this->min_php = $supported_php[ $position ];
+		} else {
+			// Fallback to first supported version if search fails.
+			$this->min_php = reset( $supported_php );
 		}
 	}
 
@@ -126,7 +143,7 @@ class PHP_Version extends Abstract_Security_Tweaks {
 	 * @return string
 	 */
 	public function get_label(): string {
-		return esc_html__( 'Update PHP to latest version', 'defender-security' );
+		return esc_html__( 'Update PHP', 'defender-security' );
 	}
 
 	/**
@@ -139,9 +156,9 @@ class PHP_Version extends Abstract_Security_Tweaks {
 
 		return sprintf(
 			/* translators: %s: Min PHP version. %s: Min PHP version. */
-			esc_html__(
+			wp_strip_all_tags(
 				'PHP versions older than %1$s are no longer supported. For security and stability we strongly recommend you upgrade your PHP version to version %2$s or newer as soon as possible.',
-				'defender-security'
+				'wpdef'
 			),
 			$this->min_php,
 			$this->min_php
@@ -157,14 +174,19 @@ class PHP_Version extends Abstract_Security_Tweaks {
 		$this->set_php_versions();
 
 		return array(
-			'slug'          => $this->slug,
-			'title'         => $this->get_label(),
-			'errorReason'   => $this->get_error_reason(),
-			'successReason' => esc_html__( 'You have the latest version of PHP installed, good stuff!', 'defender-security' ),
-			'misc'          => array(
+			'slug'             => $this->slug,
+			'title'            => $this->get_label(),
+			'errorReason'      => $this->get_error_reason(),
+			'successReason'    => wp_strip_all_tags( __( 'You have the latest version of PHP installed, good stuff!', 'defender-security' ) ),
+			'misc'             => array(
 				'php_version'        => $this->current_php,
 				'min_php_version'    => $this->min_php,
 				'stable_php_version' => $this->stable_php,
+				'show_revert_button' => false,
+				'show_action_button' => false,
+			),
+			'bulk_description' => array(
+				wp_strip_all_tags( __( 'PHP powers WordPress by processing code and generating your site’s pages. Update PHP to keep your site fast, reliable, secure, and compatible with supported versions.', 'defender-security' ) ),
 			),
 		);
 	}

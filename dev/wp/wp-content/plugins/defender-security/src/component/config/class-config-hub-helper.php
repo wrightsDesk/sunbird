@@ -19,6 +19,7 @@ class Config_Hub_Helper {
 	public const CONFIGS_TRANSIENT_TIME_KEY = 'wpdefender_preset_configs_transient_time';
 	public const ACTIVE_FLAG_CLEAR_KEY      = 'wpdefender_config_clear_active_tag';
 	public const CONFIGS_TRANSIENT_TIME     = 600; // 600 = 10 minutes.
+	public const DELETED_HUB_IDS_OPTION     = 'wpdefender_deleted_hub_config_ids';
 
 	/**
 	 * WPMU DEV Plugin ID.
@@ -166,11 +167,11 @@ class Config_Hub_Helper {
 			return false;
 		}
 
-		if ( empty( $sc_value['configs'] ) ) {
+		if ( ! isset( $sc_value['configs'] ) || ! is_array( $sc_value['configs'] ) || array() === $sc_value['configs'] ) {
 			return false;
 		}
 
-		if ( empty( $sc_value['labels'] ) ) {
+		if ( ! isset( $sc_value['labels'] ) || ! is_array( $sc_value['labels'] ) || array() === $sc_value['labels'] ) {
 			$config_component   = wd_di()->get( Backup_Settings::class );
 			$sc_value['labels'] = $config_component->prepare_config_labels( $sc_value['configs'] );
 		}
@@ -226,6 +227,9 @@ class Config_Hub_Helper {
 	 * @return bool
 	 */
 	public static function delete_configs_from_hub( int $hub_id ): bool {
+		// Always tombstone the hub_id locally, so Hub re-sync can't re-create it.
+		self::add_deleted_hub_id( $hub_id );
+
 		if ( ! defined( WPMUDEV::class . '::API_PACKAGE_CONFIGS' ) ) {
 			return false;
 		}
@@ -238,14 +242,41 @@ class Config_Hub_Helper {
 			$wpmudev->get_apikey(),
 			'DELETE'
 		);
+		// Emergency exit, for example, if the API key is not valid.
+		if ( ! is_array( $response ) ) {
+			return false;
+		}
 
 		if ( isset( $response['deleted'] ) && $response['deleted'] ) {
 			delete_site_transient( self::CONFIGS_TRANSIENT_KEY );
+			self::remove_deleted_hub_id( $hub_id );
 
 			return true;
 		}
 
 		return false;
+	}
+
+	/**
+	 * Add a Hub config ID to the locally-deleted blocklist.
+	 *
+	 * @param  int $hub_id  The Hub config ID.
+	 */
+	public static function add_deleted_hub_id( int $hub_id ): void {
+		$ids   = get_site_option( self::DELETED_HUB_IDS_OPTION, array() );
+		$ids[] = $hub_id;
+		update_site_option( self::DELETED_HUB_IDS_OPTION, array_unique( $ids ) );
+	}
+
+	/**
+	 * Remove a Hub config ID from the locally-deleted blocklist.
+	 *
+	 * @param  int $hub_id  The Hub config ID.
+	 */
+	public static function remove_deleted_hub_id( int $hub_id ): void {
+		$ids = get_site_option( self::DELETED_HUB_IDS_OPTION, array() );
+		$ids = array_values( array_filter( $ids, fn( $id ) => $id !== $hub_id ) );
+		update_site_option( self::DELETED_HUB_IDS_OPTION, $ids );
 	}
 
 	/**
@@ -278,6 +309,10 @@ class Config_Hub_Helper {
 			$wpmudev->get_apikey(),
 			'PUT'
 		);
+		// Emergency exit, for example, if the API key is not valid.
+		if ( ! is_array( $response ) ) {
+			return false;
+		}
 
 		if ( isset( $response['id'] ) && $response['id'] ) {
 			delete_site_transient( self::CONFIGS_TRANSIENT_KEY );
@@ -299,6 +334,10 @@ class Config_Hub_Helper {
 	 * @return bool|array
 	 */
 	private static function send_request( string $url, array $body, $api_key, string $method ) {
+		if ( false === $api_key || '' === $api_key ) {
+			return false;
+		}
+
 		$request = wp_remote_request(
 			$url,
 			array(
@@ -340,12 +379,19 @@ class Config_Hub_Helper {
 			return $stored_configs;
 		}
 
+		$deleted_hub_ids = get_site_option( self::DELETED_HUB_IDS_OPTION, array() );
+
 		// Store id of keys that need to delete. Because they are deleted on HUB.
 		$delete_hub_ids    = array();
 		$once_delete_unset = array();
 
 		// Loop through all items found in the API.
 		foreach ( $response as $api_config ) {
+			// Skip configs that were explicitly deleted locally but not yet removed from Hub.
+			if ( in_array( $api_config['id'], $deleted_hub_ids, true ) ) {
+				continue;
+			}
+
 			$found            = false;
 			$api_config_array = json_decode( $api_config['config'], true );
 
@@ -360,7 +406,7 @@ class Config_Hub_Helper {
 					if ( $sc_value['hub_id'] === $api_config['id'] ) {
 						// Sanitize data.
 						$sc_value['name']         = sanitize_text_field( $api_config['name'] );
-						$sc_value['description']  = empty( $api_config['description'] )
+						$sc_value['description']  = ! isset( $api_config['description'] ) || ! is_string( $api_config['description'] )
 							? ''
 							: sanitize_textarea_field( $api_config['description'] );
 						$sc_value['immortal']     = $api_config_array['immortal'] ?? $sc_value['immortal'];
@@ -416,7 +462,7 @@ class Config_Hub_Helper {
 		$api_config_array['hub_id'] = $api_config['id'];
 		// Sanitize data.
 		$api_config_array['name']         = sanitize_text_field( $api_config['name'] );
-		$api_config_array['description']  = empty( $api_config['description'] )
+		$api_config_array['description']  = ! isset( $api_config['description'] ) || ! is_string( $api_config['description'] )
 			? ''
 			: sanitize_textarea_field( $api_config['description'] );
 		$api_config_array['immortal']     = $api_config_array['immortal'] ?? false;
@@ -439,7 +485,8 @@ class Config_Hub_Helper {
 
 		$configs = self::get_configs( $service );
 
-		foreach ( $configs as &$config ) {
+		foreach ( $configs as $key => &$config ) {
+			$config['key'] = $key;
 			unset( $config['configs'] );
 		}
 

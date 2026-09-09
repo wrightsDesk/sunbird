@@ -130,6 +130,12 @@ class Core_Integrity extends Behavior {
 					}
 					$item_type = 'dir';
 				} else {
+					// Sometimes plugins create duplicate readme files. If the content is identical, we'll ignore the issue.
+					if ( isset( $checksums['readme.html'] ) && $this->compare_hashes( $file, $checksums['readme.html'] ) ) {
+						$this->log( sprintf( 'skip %s because this is just the same renamed readme file', $file ), Scan_Controller::SCAN_LOG );
+						$core_files->next();
+						continue;
+					}
 					$item_type = 'unversion';
 				}
 
@@ -156,9 +162,7 @@ class Core_Integrity extends Behavior {
 			$last = Scan::get_last();
 			if ( is_object( $last ) ) {
 				$ignored_issues = $last->get_issues( Scan_Item::TYPE_INTEGRITY, Scan_Item::STATUS_IGNORE );
-				foreach ( $ignored_issues as $issue ) {
-					$model->add_item( Scan_Item::TYPE_INTEGRITY, $issue->raw_data, Scan_Item::STATUS_IGNORE );
-				}
+				$model->carry_forward_ignored_issues( Scan_Item::TYPE_INTEGRITY, $ignored_issues, 'file' );
 			}
 			// Done, reset this, so we can use it later.
 			$model->task_checkpoint = '';
@@ -185,7 +189,8 @@ class Core_Integrity extends Behavior {
 		if ( ! function_exists( 'get_core_checksums' ) ) {
 			include_once ABSPATH . 'wp-admin/includes/update.php';
 		}
-		$checksums = get_core_checksums( $wp_version, empty( $wp_local_package ) ? 'en_US' : $wp_local_package );
+		$locale    = isset( $wp_local_package ) && '' !== $wp_local_package ? $wp_local_package : 'en_US';
+		$checksums = get_core_checksums( $wp_version, $locale );
 		if ( false === $checksums ) {
 			$this->log( 'Error from fetching checksums from wp.org', Scan_Controller::SCAN_LOG );
 			$scan         = $this->owner->scan;

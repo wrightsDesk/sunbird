@@ -12,6 +12,7 @@ use Jet_Form_Builder\Blocks;
 use JFB_Components\Module\Module_Controller_It;
 use JFB_Components\Module\Module_Controller_Trait;
 use Jet_Form_Builder\Gateways\Gateway_Manager;
+
 class Modules_Controller implements Module_Controller_It {
 
 	use Module_Controller_Trait;
@@ -59,9 +60,11 @@ class Modules_Controller implements Module_Controller_It {
 			new Validation\Module(),
 			new Wysiwyg\Module(),
 			new Switcher\Module(),
-			new Promo_Banner\Module(),
 			new Fields_Render_Validator\Module(),
 			new User_Journey\Module(),
+			new Multi_Gateway\Module(),
+			new Macros_Inserter\Module(),
+			new Media_Cleanup\Module(),
 		);
 	}
 

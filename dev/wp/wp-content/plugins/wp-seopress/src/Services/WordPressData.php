@@ -1,78 +1,106 @@
-<?php
+<?php // phpcs:ignore
 
 namespace SEOPress\Services;
 
-if ( ! defined('ABSPATH')) {
-    exit;
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
 }
 
-class WordPressData
-{
-    public function getPostTypes( $return_all = false, $args = array() ) {
-        global $wp_post_types;
+/**
+ * WordPressData
+ */
+class WordPressData {
 
-        $default_args = [
-            'show_ui' => true,
-            'public'  => true,
-        ];
+	/**
+	 * The getPostTypes function.
+	 *
+	 * @param bool  $return_all The return all.
+	 * @param array $args The args.
+	 *
+	 * @return array
+	 */
+	public function getPostTypes( $return_all = false, $args = array() ) { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		global $wp_post_types;
 
-        $args = wp_parse_args( $args, $default_args );
+		$default_args = array(
+			'public' => true,
+		);
 
-        if ( '' === $args['public'] ) {
-            unset( $args['public'] );
-        }
+		$args = wp_parse_args( $args, $default_args );
 
-        $post_types = get_post_types($args, 'objects', 'and');
+		if ( '' === $args['public'] ) {
+			unset( $args['public'] );
+		}
 
-        if ( ! $return_all ) {
-            unset(
-                $post_types['attachment'],
-                $post_types['seopress_rankings'],
-                $post_types['seopress_backlinks'],
-                $post_types['seopress_404'],
-                $post_types['elementor_library'],
-                $post_types['customer_discount'],
-                $post_types['cuar_private_file'],
-                $post_types['cuar_private_page'],
-                $post_types['ct_template'],
-                $post_types['bricks_template']
-            );
-        }
+		$post_types = get_post_types( $args, 'objects' );
 
-        $post_types = apply_filters( 'seopress_post_types', $post_types, $return_all, $args );
+		// Filter to only include viewable post types (matches WordPress core conventions).
+		$post_types = array_filter( $post_types, 'is_post_type_viewable' );
 
-        return $post_types;
-    }
+		if ( ! $return_all ) {
+			unset(
+				$post_types['attachment'],
+				$post_types['seopress_rankings'],
+				$post_types['seopress_backlinks'],
+				$post_types['seopress_404'],
+				$post_types['elementor_library'],
+				$post_types['customer_discount'],
+				$post_types['cuar_private_file'],
+				$post_types['cuar_private_page'],
+				$post_types['ct_template'],
+				$post_types['bricks_template']
+			);
+		}
 
-    public function getTaxonomies($with_terms = false, $return_all = false) {
-        $args = [
-            'show_ui' => true,
-            'public'  => true,
-        ];
-        $args = apply_filters('seopress_get_taxonomies_args', $args);
+		$post_types = apply_filters_deprecated(
+			'seopress_get_post_types_args',
+			array( $post_types ),
+			'9.8.0',
+			'seopress_post_types'
+		);
 
-        $output     = 'objects'; // or objects
-        $operator   = 'and'; // 'and' or 'or'
-        $taxonomies = get_taxonomies($args, $output, $operator);
+		$post_types = apply_filters( 'seopress_post_types', $post_types, $return_all, $args );
 
-        if ( ! $return_all ) {
-            unset(
-                $taxonomies['seopress_bl_competitors'],
-                $taxonomies['template_tag'],
-                $taxonomies['template_bundle']
-            );
-        }
+		return $post_types;
+	}
 
-        $taxonomies = apply_filters( 'seopress_get_taxonomies_list', $taxonomies, $return_all );
+	/**
+	 * The getTaxonomies function.
+	 *
+	 * @param bool $with_terms The with terms.
+	 * @param bool $return_all The return all.
+	 *
+	 * @return array
+	 */
+	public function getTaxonomies( $with_terms = false, $return_all = false ) { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		$args = array(
+			'public' => true,
+		);
+		$args = apply_filters( 'seopress_get_taxonomies_args', $args );
 
-        if ( ! $with_terms) {
-            return $taxonomies;
-        }
+		$taxonomies = get_taxonomies( $args, 'objects' );
 
-        foreach ($taxonomies as $_tax_slug => &$_tax) {
-            $_tax->terms = get_terms(['taxonomy' => $_tax_slug]);
-        }
+		// Filter to only include viewable taxonomies (matches WordPress core conventions).
+		$taxonomies = array_filter( $taxonomies, 'is_taxonomy_viewable' );
 
-        return $taxonomies;
-    }
+		if ( ! $return_all ) {
+			unset(
+				$taxonomies['seopress_bl_competitors'],
+				$taxonomies['template_tag'],
+				$taxonomies['template_bundle']
+			);
+		}
+
+		$taxonomies = apply_filters( 'seopress_get_taxonomies_list', $taxonomies, $return_all );
+
+		if ( ! $with_terms ) {
+			return $taxonomies;
+		}
+
+		foreach ( $taxonomies as $_tax_slug => &$_tax ) {
+			$_tax->terms = get_terms( array( 'taxonomy' => $_tax_slug ) );
+		}
+
+		return $taxonomies;
+	}
 }

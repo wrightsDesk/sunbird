@@ -514,6 +514,8 @@
 		  if (slider.settings.ariaHidden) {
 			sliceAppend.attr('aria-hidden', true);
 			slicePrepend.attr('aria-hidden', true);
+			sliceAppend.find( 'a' ).attr('tabindex', -1);
+			slicePrepend.find( 'a' ).attr('tabindex', -1);
 		  }
 
 		  el.append(sliceAppend).prepend(slicePrepend);
@@ -1591,9 +1593,14 @@
 		// only apply attributes if the setting is enabled
 		if (slider.settings.ariaHidden) {
 		  // add aria-hidden=true to all elements
-		  slider.children.attr('aria-hidden', 'true');
+		  var children = slider.children;
+		  children.attr('aria-hidden', 'true');
+		  children.find( 'a' ).attr('tabindex', -1);
+
 		  // get the visible elements and change to aria-hidden=false
-		  slider.children.slice(startVisibleIndex, startVisibleIndex + numberOfSlidesShowing).attr('aria-hidden', 'false');
+		  var visible = slider.children.slice(startVisibleIndex, startVisibleIndex + numberOfSlidesShowing);
+		  visible.attr('aria-hidden', 'false');
+		  visible.find( 'a' ).attr('tabindex', 0);
 		}
 	  };
 

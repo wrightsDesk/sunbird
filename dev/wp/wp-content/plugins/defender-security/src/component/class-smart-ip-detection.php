@@ -118,7 +118,7 @@ class Smart_Ip_Detection extends Component {
 
 		foreach ( $headers_to_check as $header ) {
 			$ips = defender_get_data_from_request( $header, 's' );
-			if ( ! empty( $ips ) ) {
+			if ( ! is_null( $ips ) && '' !== $ips ) {
 				$ips = array_map( 'trim', preg_split( '/[\s,]+/', $ips ) );
 				foreach ( $ips as $ip ) {
 					if ( in_array( $ip, $known_ips, true ) ) {
@@ -177,7 +177,7 @@ class Smart_Ip_Detection extends Component {
 			admin_url( 'admin-ajax.php' )
 		);
 		$args     = array(
-			'sslverify' => false,  // Many hosts have no updated CA bundle.
+			'sslverify' => true,
 		);
 		$response = wp_remote_get( $url, $args );
 

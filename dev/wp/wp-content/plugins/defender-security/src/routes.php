@@ -44,26 +44,24 @@ function defender_init_routes() {
 			'update_security_reminder'  => 'update_security_reminder',
 			'update_autogenerate_flag'  => 'update_autogenerate_flag',
 			'update_enabled_user_enums' => 'update_enabled_user_enums',
-			'handle_notice'             => 'handle_notice',
-			'refuse_notice'             => 'refuse_notice',
 			'check_xml_rpc'             => 'check_xml_rpc',
 		),
 		'ip_lockout'        => array(
-			'update_settings'      => 'save_settings',
-			'download_geo_db'      => 'download_geo_db',
-			'import_ips'           => 'import_ips',
-			'get_listed_ips'       => 'get_listed_ips',
-			'query_locked_ips'     => 'query_locked_ips',
-			'ip_action'            => 'ip_action',
-			'export_ips'           => 'export_ips',
-			'empty_logs'           => 'empty_logs',
-			'dashboard_activation' => 'dashboard_activation',
-			'import_ua'            => 'import_ua',
-			'export_ua'            => 'export_ua',
-			'empty_lockouts'       => 'empty_lockouts',
-			'verify_blocked_user'  => array( 'verify_blocked_user', true ),
-			'send_again'           => array( 'send_again', true ),
-			'agf_unlock_user'      => array( 'agf_unlock_user', true ),
+			'update_settings'        => 'save_settings',
+			'download_geo_db'        => 'download_geo_db',
+			'import_ips'             => 'import_ips',
+			'get_listed_ips'         => 'get_listed_ips',
+			'query_locked_ips'       => 'query_locked_ips',
+			'ip_action'              => 'ip_action',
+			'export_ips'             => 'export_ips',
+			'empty_logs'             => 'empty_logs',
+			'toggle_lockout_modules' => 'toggle_lockout_modules',
+			'import_ua'              => 'import_ua',
+			'export_ua'              => 'export_ua',
+			'empty_lockouts'         => 'empty_lockouts',
+			'verify_blocked_user'    => array( 'verify_blocked_user', true ),
+			'send_again'             => array( 'send_again', true ),
+			'agf_unlock_user'        => array( 'agf_unlock_user', true ),
 		),
 		'global_ip_lockout' => array(
 			'refresh_global_ip_list'  => 'refresh_global_ip_list',
@@ -77,15 +75,6 @@ function defender_init_routes() {
 			'item_action'     => 'item_action',
 			'update_settings' => 'save_settings',
 			'bulk_action'     => 'bulk_action',
-			'handle_notice'   => 'handle_notice',
-			'postpone_notice' => 'postpone_notice',
-			'refuse_notice'   => 'refuse_notice',
-		),
-		'audit'             => array(
-			'update_settings' => 'save_settings',
-			'pull_logs'       => 'pull_logs',
-			'summary'         => 'summary',
-			'export_as_csv'   => 'export_as_csv',
 		),
 		'notification'      => array(
 			'get_users'         => 'get_users',
@@ -109,21 +98,6 @@ function defender_init_routes() {
 			'update_settings' => 'save_settings',
 			'reset_settings'  => 'reset_settings',
 		),
-		'waf'               => array(
-			'recheck' => 'recheck',
-		),
-		'onboard'           => array(
-			'activating'       => 'activating',
-			'skip'             => 'skip',
-			'antibot_reminder' => 'antibot_reminder',
-		),
-		'tutorial'          => array(
-			'hide' => 'hide',
-		),
-		'blocklist_monitor' => array(
-			'blacklist_status'        => 'blacklist_status',
-			'toggle_blacklist_status' => 'toggle_blacklist_status',
-		),
 		'tracking'          => array(
 			'close_track_modal' => 'close_track_modal',
 			'save_track_modal'  => 'save_track_modal',
@@ -131,17 +105,30 @@ function defender_init_routes() {
 		'hub_connector'     => array(
 			'activate_dashboard_plugin' => 'activate_dashboard_plugin',
 		),
-	);
-
-	if ( class_exists( 'WP_Defender\Controller\Quarantine' ) ) {
-		$routes['quarantine'] = array(
+		'rate'              => array(
+			'postpone_notice' => 'postpone_notice',
+			'refuse_notice'   => 'refuse_notice',
+			'handle_notice'   => 'handle_notice',
+		),
+		'blocklist_monitor' => array(
+			'blacklist_status'        => 'blacklist_status',
+			'toggle_blacklist_status' => 'toggle_blacklist_status',
+		),
+		'activity_log'      => array(
+			'add_notification'    => 'add_notification',
+			'fetch_notifications' => 'fetch_notifications',
+		),
+		'quarantine'        => array(
 			'restore_file'          => 'restore_file',
 			'quarantine_collection' => 'quarantine_collection',
 			'delete_file'           => 'delete_file',
-		);
-	}
-
+		),
+	);
 	foreach ( $routes as $module => $info ) {
+		$controller = Array_Cache::get( $module );
+		if ( null === $controller ) {
+			continue;
+		}
 		foreach ( $info as $name => $func ) {
 			$nopriv = false;
 			if ( is_array( $func ) ) {
@@ -151,10 +138,7 @@ function defender_init_routes() {
 				$name,
 				$module,
 				$name,
-				array(
-					Array_Cache::get( $module ),
-					$func,
-				),
+				array( $controller, $func ),
 				$nopriv
 			);
 		}

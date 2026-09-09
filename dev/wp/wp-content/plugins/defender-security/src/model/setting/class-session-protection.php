@@ -18,6 +18,11 @@ class Session_Protection extends Setting {
 	use User;
 
 	/**
+	 * Maximum allowed idle timeout in hours (~24.8 days, aligned with JS setTimeout 32-bit limit).
+	 */
+	public const MAX_IDLE_TIMEOUT_HOURS = 596;
+
+	/**
 	 * Feature status
 	 *
 	 * @defender_property
@@ -77,11 +82,34 @@ class Session_Protection extends Setting {
 	 * @return void
 	 */
 	protected function before_load(): void {
-		$tweak_duration       = wd_di()->get( Login_Duration::class )->get_tweak_duration();
-		$this->login_duration = ! empty( $tweak_duration )
-			? $tweak_duration
-			: $this->login_duration;
+		$this->login_duration = $this->get_default_duration();
 		$this->user_roles     = array( 'administrator' );
+	}
+
+	/**
+	 * Clamps idle_timeout to MAX_IDLE_TIMEOUT_HOURS to guard against legacy values saved without a limit.
+	 *
+	 * @return void
+	 */
+	protected function after_load(): void {
+		if ( $this->idle_timeout > self::MAX_IDLE_TIMEOUT_HOURS ) {
+			$this->idle_timeout = self::MAX_IDLE_TIMEOUT_HOURS;
+		}
+	}
+
+	/**
+	 * Validates that idle_timeout does not exceed the allowed maximum.
+	 *
+	 * @return void
+	 */
+	protected function after_validate(): void {
+		if ( $this->idle_timeout > self::MAX_IDLE_TIMEOUT_HOURS ) {
+			$this->errors['idle_timeout'] = sprintf(
+				/* translators: %d: maximum allowed hours */
+				esc_html__( 'Idle timeout cannot exceed %d hours (30 days).', 'defender-security' ),
+				self::MAX_IDLE_TIMEOUT_HOURS
+			);
+		}
 	}
 
 	/**
@@ -90,7 +118,7 @@ class Session_Protection extends Setting {
 	 * @return bool
 	 */
 	public function has_properties(): bool {
-		return ! empty( $this->lock_properties );
+		return array() !== $this->lock_properties;
 	}
 
 	/**
@@ -111,5 +139,27 @@ class Session_Protection extends Setting {
 	 */
 	public static function get_module_slug(): string {
 		return 'session-protection';
+	}
+
+	/**
+	 * Determines whether session protection is currently active.
+	 *
+	 * @return bool True if enabled and roles are set; otherwise, false.
+	 */
+	public function is_active(): bool {
+		return $this->enabled && count( $this->user_roles ) > 0;
+	}
+
+	/**
+	 * Retrieves the default login duration.
+	 *
+	 * @return int Default login duration in days.
+	 */
+	public function get_default_duration(): int {
+		$tweak_duration = wd_di()->get( Login_Duration::class )->get_tweak_duration();
+
+		return $tweak_duration > 0
+			? $tweak_duration
+			: $this->login_duration;
 	}
 }

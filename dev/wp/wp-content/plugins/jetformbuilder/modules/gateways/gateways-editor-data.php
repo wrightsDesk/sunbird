@@ -1,6 +1,5 @@
 <?php
 
-
 namespace JFB_Modules\Gateways;
 
 // If this file is called directly, abort.
@@ -17,6 +16,7 @@ trait Gateways_Editor_Data {
 				'notifications_success'     => _x( 'On successful payment:', 'Gateways editor data', 'jet-form-builder' ),
 				'notifications_failed'      => _x( 'On failed payment:', 'Gateways editor data', 'jet-form-builder' ),
 				'price_field'               => _x( 'Price/amount field', 'Gateways editor data', 'jet-form-builder' ),
+				'protect_price_field'       => _x( 'Secure payment amount', 'Gateways editor data', 'jet-form-builder' ),
 				'message_success'           => _x( 'Payment success message', 'Gateways editor data', 'jet-form-builder' ),
 				'message_failed'            => _x( 'Payment failed message', 'Gateways editor data', 'jet-form-builder' ),
 				'use_success_redirect'      => _x( 'Redirect to a page', 'Gateways editor data', 'jet-form-builder' ),
@@ -25,6 +25,28 @@ trait Gateways_Editor_Data {
 					'Enable this toggle to redirect a user after successful payment.',
 					'Gateways editor data',
 					'jet-form-builder'
+				),
+				'protect_price_field_help'  => _x(
+					'Applies to all gateways linked to the price field.',
+					'Gateways editor data',
+					'jet-form-builder'
+				),
+				'protect_price_field_risk'  => _x(
+					'Disabled: the gateway strictly trusts the price submitted by the browser(Unsecure).',
+					'Gateways editor data',
+					'jet-form-builder'
+				),
+				'protect_price_field_safe'  => array(
+					'valid'   => _x(
+						'Calculated Field, Hidden Field (Render in HTML disabled), Select/Radio/Checkbox fields with calculate values, Booking price macros (e.g. %ADVANCED_PRICE::...%).',
+						'Gateways editor data',
+						'jet-form-builder'
+					),
+					'invalid' => _x(
+						'Text/Number/Date fields, Hidden Field (Render in HTML enabled), post meta macros (e.g. %META::...%).',
+						'Gateways editor data',
+						'jet-form-builder'
+					),
 				),
 			),
 			$this->options_labels(),
@@ -109,13 +131,76 @@ trait Gateways_Editor_Data {
 		return $result;
 	}
 
+	private function required_fields_map(): array {
+		// Fallback hardcode (until gateway plugins can self-declare)
+		$map = array(
+			'paypal' => array( 'client_id', 'secret' ),
+			'stripe' => array( 'public', 'secret' ),
+		);
+
+		foreach ( $this->rep_get_items() as $gateway ) {
+			/** @var Base_Gateway $gateway */
+			$id     = $gateway->get_id();
+			$fields = (array) $gateway->required_credentials_fields();
+
+			if ( ! empty( $fields ) ) {
+				$map[ $id ] = array_values( $fields );
+			}
+		}
+
+		return $map;
+	}
+
+	private function gateways_global_valid() {
+
+		$required_map = $this->required_fields_map();
+		$result       = array();
+
+		foreach ( $this->rep_get_items() as $gateway ) {
+
+			$id = $gateway->get_id();
+
+			if ( ! isset( $required_map[ $id ] ) ) {
+				continue;
+			}
+
+			$class_name = get_class( $gateway );
+
+			if ( ! method_exists( $class_name, 'get_credentials' ) ) {
+				$result[ $id ] = false;
+				continue;
+			}
+
+			$creds = $class_name::get_credentials();
+
+			$is_valid = true;
+
+			foreach ( $required_map[ $id ] as $field ) {
+				if ( empty( $creds[ $field ] ) ) {
+					$is_valid = false;
+					break;
+				}
+			}
+
+			$result[ $id ] = $is_valid;
+		}
+
+		return $result;
+	}
+
 	public function editor_data() {
+		$required_map = $this->required_fields_map();
+
 		$result = array(
 			'allowed'    => true,
 			'labels'     => $this->labels(),
 			'list'       => $this->gateways_for_js(),
 			'messages'   => $this->default_messages(),
 			'additional' => $this->gateways_additional(),
+			'validation' => array(
+				'required_map' => $required_map,
+				'global_valid' => $this->gateways_global_valid(),
+			),
 		);
 
 		return apply_filters( 'jet-form-builder/gateways/editor-data', $result );

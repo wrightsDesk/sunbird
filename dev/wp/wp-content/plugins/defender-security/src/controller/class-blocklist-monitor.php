@@ -20,12 +20,19 @@ class Blocklist_Monitor extends Controller {
 
 	public const CACHE_BLACKLIST_STATUS = 'wpdefender_blacklist_status', CACHE_TIME = 300;
 
+	public const MODULE_SLUG = 'blocklist-monitor';
+
 	/**
 	 * Initializes the model and service, registers routes, and sets up scheduled events if the model is active.
 	 */
 	public function __construct() {
 		$this->attach_behavior( WPMUDEV::class, WPMUDEV::class );
 		$this->register_routes();
+		// admin_init priority 20 runs after Hub_Connector sets the transient (priority 10);
+		// the other two hooks cover async-sync cases.
+		add_action( 'admin_init', array( $this, 'maybe_hcm_connection_attempt' ), 20 );
+		add_action( 'wpdef_hub_connector_synced', array( $this, 'maybe_hcm_connection_attempt' ) );
+		add_action( 'wpmudev_hub_connector_first_sync_completed', array( $this, 'maybe_hcm_connection_attempt' ) );
 	}
 
 	/**
@@ -57,7 +64,15 @@ class Blocklist_Monitor extends Controller {
 	 * @return array
 	 */
 	public function data_frontend() {
-		return $this->dump_routes_and_nonces();
+		$available = false !== $this->get_apikey();
+		$status    = get_site_transient( self::CACHE_BLACKLIST_STATUS );
+
+		return array_merge(
+			$this->dump_routes_and_nonces(),
+			array(
+				'status' => $available && false !== $status && ! is_wp_error( $status ) ? $status : -1,
+			)
+		);
 	}
 
 	/**
@@ -149,7 +164,7 @@ class Blocklist_Monitor extends Controller {
 			return false;
 		}
 
-		if ( ! $this->is_pro() ) {
+		if ( false === $this->get_apikey() ) {
 			return new Response(
 				false,
 				array(
@@ -212,54 +227,59 @@ class Blocklist_Monitor extends Controller {
 	}
 
 	/**
+	 * Auto-enable blocklist monitoring after Hub connection if user triggered from Settings/Tools page.
+	 *
+	 * @return void
+	 */
+	public function maybe_hcm_connection_attempt(): void {
+		$data        = get_site_transient( Hub_Connector::TRANSIENT_KEY );
+		$module_slug = $data['module_slug'] ?? '';
+
+		if ( self::MODULE_SLUG !== $module_slug || ! self::get_hcm_status() ) {
+			return;
+		}
+
+		delete_site_transient( Hub_Connector::TRANSIENT_KEY );
+
+		$this->make_wpmu_request( WPMUDEV::API_BLACKLIST, array(), array( 'method' => 'POST' ) );
+		$status = $this->domain_status();
+		set_site_transient( self::CACHE_BLACKLIST_STATUS, $status, self::CACHE_TIME );
+	}
+
+	/**
 	 * Exports strings.
 	 *
 	 * @return array An array of strings.
 	 */
 	public function export_strings(): array {
-		if ( ! $this->is_pro() ) {
-			return array(
-				sprintf(
-				/* translators: %s: Html for Pro-tag. */
-					esc_html__( 'Inactive %s', 'defender-security' ),
-					'<span class="sui-tag sui-tag-pro">Pro</span>'
-				),
-			);
+		if ( false === $this->get_apikey() ) {
+			return array( esc_html__( 'Blocklist Monitor inactive', 'defender-security' ) );
 		}
 
 		if ( '1' === (string) $this->get_status() ) {
-			$strings = array( esc_html__( 'Active', 'defender-security' ) );
+			$strings = array( esc_html__( 'Blocklist Monitor active', 'defender-security' ) );
 		} else {
-			$strings = array( esc_html__( 'Inactive', 'defender-security' ) );
+			$strings = array( esc_html__( 'Blocklist Monitor inactive', 'defender-security' ) );
 		}
 
 		return $strings;
 	}
 
 	/**
-	 * Configures strings based on the provided configuration and subscription status.
+	 * Configures strings based on the provided configuration
 	 *
 	 * @param  array $config  Configuration array.
-	 * @param  bool  $is_pro  Indicates whether the subscription is Pro.
 	 *
 	 * @return array An array of configuration strings.
 	 */
-	public function config_strings( $config, $is_pro ): array {
-		if ( $is_pro ) {
-			$strings = $config['enabled'] ? array( esc_html__( 'Active', 'defender-security' ) ) : array(
-				esc_html__( 'Inactive', 'defender-security' ),
-			);
-		} else {
-			$strings = array(
-				sprintf(
-				/* translators: %s: Html for Pro-tag. */
-					esc_html__( 'Inactive %s', 'defender-security' ),
-					'<span class="sui-tag sui-tag-pro">Pro</span>'
-				),
-			);
+	public function config_strings( array $config ): array {
+		if ( false === $this->get_apikey() ) {
+			return array( esc_html__( 'Blocklist Monitor inactive', 'defender-security' ) );
 		}
 
-		return $strings;
+		return $config['enabled'] ? array( esc_html__( 'Blocklist Monitor active', 'defender-security' ) ) : array(
+			esc_html__( 'Blocklist Monitor inactive', 'defender-security' ),
+		);
 	}
 
 	/**

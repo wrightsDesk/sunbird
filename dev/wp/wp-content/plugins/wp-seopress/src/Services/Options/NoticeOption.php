@@ -1,258 +1,391 @@
-<?php
+<?php // phpcs:ignore
 
 namespace SEOPress\Services\Options;
 
-defined('ABSPATH') or exit('Cheatin&#8217; uh?');
-
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
 use SEOPress\Constants\Options;
 
-class NoticeOption
-{
-    /**
-     * @since 6.0.0
-     *
-     * @return array
-     */
-    public function getOption()
-    {
-        return get_option(Options::KEY_OPTION_NOTICE);
-    }
+/**
+ * NoticeOption
+ */
+class NoticeOption {
 
-    /**
-     * @since 6.0.0
-     *
-     * @param string $key
-     *
-     * @return mixed
-     */
-    public function searchOptionByKey($key)
-    {
-        $data = $this->getOption();
+	/**
+	 * The getOption function.
+	 *
+	 * @since 6.0.0
+	 *
+	 * @return array
+	 */
+	public function getOption() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return get_option( Options::KEY_OPTION_NOTICE );
+	}
 
-        if (empty($data)) {
-            return null;
-        }
+	/**
+	 * The searchOptionByKey function.
+	 *
+	 * @since 6.0.0
+	 *
+	 * @param string $key The key.
+	 *
+	 * @return mixed
+	 */
+	public function searchOptionByKey( $key ) { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		$data = $this->getOption();
 
-        if (! isset($data[$key])) {
-            return null;
-        }
+		if ( empty( $data ) ) {
+			return null;
+		}
 
-        return $data[$key];
-    }
+		if ( ! isset( $data[ $key ] ) ) {
+			return null;
+		}
 
-    /**
-     * @since 6.6.0
-     *
-     * @return string
-     */
-    public function getNoticeGetStarted(){
-        return $this->searchOptionByKey('notice-get-started');
-    }
+		return $data[ $key ];
+	}
 
-    /**
-     * @since 6.6.0
-     *
-     * @return string
-     */
-    public function getNoticeTasks(){
-        return $this->searchOptionByKey('notice-tasks');
-    }
+	/**
+	 * The getNoticeGetStarted function.
+	 *
+	 * @since 6.6.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeGetStarted() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-get-started' );
+	}
 
-    /**
-     * @since 6.0.0
-     *
-     * @return string
-     */
-    public function getNoticeReview(){
-        return $this->searchOptionByKey('notice-review');
-    }
+	/**
+	 * The getNoticeTasks function.
+	 *
+	 * @since 6.6.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeTasks() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-tasks' );
+	}
 
-    /**
-     * @since 6.0.0
-     *
-     * @return string
-     */
-    public function getNoticeUSM(){
-        return $this->searchOptionByKey('notice-usm');
-    }
+	/**
+	 * The getNoticeReview function.
+	 *
+	 * @since 6.0.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeReview() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-review' );
+	}
 
-    /**
-     * @since 6.0.0
-     *
-     * @return string
-     */
-    public function getNoticeWizard(){
-        return $this->searchOptionByKey('notice-wizard');
-    }
+	/**
+	 * The getNoticeUSM function.
+	 *
+	 * @since 6.0.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeUSM() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-usm' );
+	}
 
-    /**
-     * @since 6.0.0
-     *
-     * @return string
-     */
-    public function getNoticeAMPAnalytics(){
-        return $this->searchOptionByKey('notice-amp-analytics');
-    }
+	/**
+	 * The getNoticeWizard function.
+	 *
+	 * @since 6.6.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeWizard() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-wizard' );
+	}
 
-    /**
-     * @since 8.1.0
-     *
-     * @return string
-     */
-    public function getNoticeLiteSpeedCache(){
-        return $this->searchOptionByKey('notice-litespeed-cache');
-    }
+	/**
+	 * The getNoticeAMPAnalytics function.
+	 *
+	 * @since 6.0.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeAMPAnalytics() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-amp-analytics' );
+	}
 
-    /**
-     * @since 6.0.0
-     *
-     * @return string
-     */
-    public function getNoticeTitleTag(){
-        return $this->searchOptionByKey('notice-title-tag');
-    }
+	/**
+	 * The getNoticeLiteSpeedCache function.
+	 *
+	 * @since 8.1.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeLiteSpeedCache() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-litespeed-cache' );
+	}
 
-    /**
-     * @since 7.6.0
-     *
-     * @return string
-     */
-    public function getNoticeWPMLActive(){
-        return $this->searchOptionByKey('notice-wpml-active');
-    }
+	/**
+	 * The getNoticeTitleTag function.
+	 *
+	 * @since 6.0.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeTitleTag() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-title-tag' );
+	}
 
-    /**
-     * @since 6.0.0
-     *
-     * @return string
-     */
-    public function getNoticeCacheSitemap(){
-        return $this->searchOptionByKey('notice-cache-sitemap');
-    }
+	/**
+	 * The getNoticeWPMLActive function.
+	 *
+	 * @since 7.6.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeWPMLActive() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-wpml-active' );
+	}
 
-    /**
-     * @since 6.0.0
-     *
-     * @return string
-     */
-    public function getNoticeSwift(){
-        return $this->searchOptionByKey('notice-swift');
-    }
+	/**
+	 * The getNoticeCacheSitemap function.
+	 *
+	 * @since 6.0.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeCacheSitemap() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-cache-sitemap' );
+	}
 
-    /**
-     * @since 6.0.0
-     *
-     * @return string
-     */
-    public function getNoticeEnfold(){
-        return $this->searchOptionByKey('notice-enfold');
-    }
+	/**
+	 * The getNoticeSwift function.
+	 *
+	 * @since 6.0.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeSwift() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-swift' );
+	}
 
-    /**
-     * @since 6.0.0
-     *
-     * @return string
-     */
-    public function getNoticeSSL(){
-        return $this->searchOptionByKey('notice-ssl');
-    }
+	/**
+	 * The getNoticeEnfold function.
+	 *
+	 * @since 6.0.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeEnfold() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-enfold' );
+	}
 
-    /**
-     * @since 6.0.0
-     *
-     * @return string
-     */
-    public function getNoticeNoIndex(){
-        return $this->searchOptionByKey('notice-noindex');
-    }
+	/**
+	 * The getNoticeSSL function.
+	 *
+	 * @since 6.0.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeSSL() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-ssl' );
+	}
 
-    /**
-     * @since 6.0.0
-     *
-     * @return string
-     */
-    public function getNoticeRSSUseExcerpt(){
-        return $this->searchOptionByKey('notice-rss-use-excerpt');
-    }
+	/**
+	 * The getNoticeNoIndex function.
+	 *
+	 * @since 6.0.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeNoIndex() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-noindex' );
+	}
 
-    /**
-     * @since 6.0.0
-     *
-     * @return string
-     */
-    public function getNoticeGAIds(){
-        return $this->searchOptionByKey('notice-ga-ids');
-    }
+	/**
+	 * The getNoticeRSSUseExcerpt function.
+	 *
+	 * @since 6.0.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeRSSUseExcerpt() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-rss-use-excerpt' );
+	}
 
-    /**
-     * @since 6.0.0
-     *
-     * @return string
-     */
-    public function getNoticeDivideComments(){
-        return $this->searchOptionByKey('notice-divide-comments');
-    }
+	/**
+	 * The getNoticeGAIds function.
+	 *
+	 * @since 6.0.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeGAIds() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-ga-ids' );
+	}
 
-    /**
-     * @since 6.0.0
-     *
-     * @return string
-     */
-    public function getNoticePostsNumber(){
-        return $this->searchOptionByKey('notice-posts-number');
-    }
+	/**
+	 * The getNoticeDivideComments function.
+	 *
+	 * @since 6.0.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeDivideComments() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-divide-comments' );
+	}
 
-    /**
-     * @since 8.3.0
-     *
-     * @return string
-     */
-    public function getNoticeXMLSitemaps(){
-        return $this->searchOptionByKey('notice-xml-sitemaps');
-    }
+	/**
+	 * The getNoticePostsNumber function.
+	 *
+	 * @since 6.0.0
+	 *
+	 * @return string
+	 */
+	public function getNoticePostsNumber() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-posts-number' );
+	}
 
-    /**
-     * @since 6.0.0
-     *
-     * @return string
-     */
-    public function getNoticeGoogleBusiness(){
-        return $this->searchOptionByKey('notice-google-business');
-    }
+	/**
+	 * The getNoticeXMLSitemaps function.
+	 *
+	 * @since 8.3.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeXMLSitemaps() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-xml-sitemaps' );
+	}
 
-    /**
-     * @since 6.0.0
-     *
-     * @return string
-     */
-    public function getNoticeSearchConsole(){
-        return $this->searchOptionByKey('notice-search-console');
-    }
+	/**
+	 * The getNoticeGoogleBusiness function.
+	 *
+	 * @since 6.0.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeGoogleBusiness() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-google-business' );
+	}
 
-    /**
-     * @since 6.0.0
-     *
-     * @return string
-     */
-    public function getNoticeEbooks(){
-        return $this->searchOptionByKey('notice-ebooks');
-    }
+	/**
+	 * The getNoticeSearchConsole function.
+	 *
+	 * @since 6.0.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeSearchConsole() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-search-console' );
+	}
 
-    /**
-     * @since 6.5.0
-     *
-     * @return string
-     */
-    public function getNoticeIntegrations(){
-        return $this->searchOptionByKey('notice-integrations');
-    }
+	/**
+	 * The getNoticeIntegrations function.
+	 *
+	 * @since 6.5.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeIntegrations() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-integrations' );
+	}
 
-    /**
-     * @since 6.6.0
-     *
-     * @return string
-     */
-    public function getNoticeInsights(){
-        return $this->searchOptionByKey('notice-insights');
-    }
+	/**
+	 * The getNoticeInsights function.
+	 *
+	 * @since 6.6.0
+	 *
+	 * @return string
+	 */
+	public function getNoticeInsights() { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		return $this->searchOptionByKey( 'notice-insights' );
+	}
+
+	/**
+	 * Check if a promotion is dismissed.
+	 *
+	 * @since 9.6.0
+	 *
+	 * @param string $promo_id The promotion ID.
+	 *
+	 * @return bool True if dismissed and not expired.
+	 */
+	public function getPromotionDismissed( $promo_id ) { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		$data = $this->getOption();
+
+		if ( empty( $data ) ) {
+			return false;
+		}
+
+		$key = 'promo-' . $promo_id;
+
+		if ( ! isset( $data[ $key ] ) ) {
+			return false;
+		}
+
+		$dismissal = $data[ $key ];
+
+		// Check if dismiss_until has passed.
+		if ( isset( $dismissal['dismiss_until'] ) && is_numeric( $dismissal['dismiss_until'] ) ) {
+			if ( $dismissal['dismiss_until'] > 0 && time() >= (int) $dismissal['dismiss_until'] ) {
+				return false; // Dismissal has expired.
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Set a promotion as dismissed.
+	 *
+	 * @since 9.6.0
+	 *
+	 * @param string $promo_id The promotion ID.
+	 * @param int    $duration Duration in days (0 for permanent).
+	 *
+	 * @return bool True on success.
+	 */
+	public function setPromotionDismissed( $promo_id, $duration = 30 ) { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		$data = $this->getOption();
+
+		if ( ! is_array( $data ) ) {
+			$data = array();
+		}
+
+		$key = 'promo-' . $promo_id;
+
+		// Get existing count or start at 0.
+		$count = isset( $data[ $key ]['count'] ) ? (int) $data[ $key ]['count'] : 0;
+
+		$data[ $key ] = array(
+			'dismissed_at'  => time(),
+			'dismiss_until' => $duration > 0 ? time() + ( $duration * DAY_IN_SECONDS ) : 0,
+			'count'         => $count + 1,
+		);
+
+		return update_option( Options::KEY_OPTION_NOTICE, $data, false );
+	}
+
+	/**
+	 * Get the dismissal count for a promotion.
+	 *
+	 * @since 9.6.0
+	 *
+	 * @param string $promo_id The promotion ID.
+	 *
+	 * @return int The number of times dismissed.
+	 */
+	public function getPromotionDismissalCount( $promo_id ) { // phpcs:ignore -- TODO: check if method is outside this class before renaming.
+		$data = $this->getOption();
+
+		if ( empty( $data ) ) {
+			return 0;
+		}
+
+		$key = 'promo-' . $promo_id;
+
+		if ( ! isset( $data[ $key ] ) || ! isset( $data[ $key ]['count'] ) ) {
+			return 0;
+		}
+
+		return (int) $data[ $key ]['count'];
+	}
 }

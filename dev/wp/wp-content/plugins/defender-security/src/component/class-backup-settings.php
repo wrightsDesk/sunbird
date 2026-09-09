@@ -42,11 +42,15 @@ use WP_Defender\Model\Setting\Main_Setting as Model_Main_Setting;
 use WP_Defender\Model\Setting\Audit_Logging as Model_Audit_Logging;
 use WP_Defender\Model\Setting\Login_Lockout as Model_Login_Lockout;
 use WP_Defender\Model\Setting\User_Agent_Lockout as Model_Ua_Lockout;
+use WP_Defender\Model\Setting\Strong_Password as Strong_Password_Model;
 use WP_Defender\Model\Setting\Security_Tweaks as Model_Security_Tweaks;
+use WP_Defender\Controller\Strong_Password as Strong_Password_Controller;
 use WP_Defender\Controller\Security_Tweaks as Controller_Security_Tweaks;
 use WP_Defender\Model\Setting\Notfound_Lockout as Model_Notfound_Lockout;
 use WP_Defender\Model\Setting\Security_Headers as Model_Security_Headers;
 use WP_Defender\Model\Setting\Blacklist_Lockout as Model_Blacklist_Lockout;
+use WP_Defender\Model\Setting\Session_Protection as Session_Protection_Model;
+use WP_Defender\Controller\Session_Protection as Session_Protection_Controller;
 use WP_Defender\Model\Setting\Password_Protection as Model_Password_Protection;
 use WP_Defender\Controller\Password_Protection as Controller_Password_Protection;
 
@@ -60,18 +64,19 @@ class Backup_Settings extends Component {
 	public const KEY = 'defender_last_settings', INDEXER = 'defender_config_indexer';
 
 	/**
-	 * Indicates whether the current installation is a pro version.
+	 * Indicates whether the site has a HUB API key (true for both free and pro with Hub connected).
 	 *
 	 * @var bool
 	 */
-	private $is_pro;
+	private $has_hub_api_key;
 
 	/**
 	 * Constructor for the Backup_Settings class.
 	 * It initializes the class and sets whether the current installation is a pro version.
 	 */
 	public function __construct() {
-		$this->is_pro = ( new WPMUDEV() )->is_pro();
+		$wpmudev = new WPMUDEV();
+		$this->has_hub_api_key = $wpmudev->is_apikey_available();
 	}
 
 	/**
@@ -89,15 +94,15 @@ class Backup_Settings extends Component {
 		) {
 			return array();
 		}
-		if ( empty( $notification_object->in_house_recipients ) && empty( $notification_object->out_house_recipients ) ) {
+		if ( array() === $notification_object->in_house_recipients && array() === $notification_object->out_house_recipients ) {
 			return array();
 		}
 
 		$subscribers = array();
-		if ( ! empty( $notification_object->in_house_recipients ) ) {
+		if ( array() !== $notification_object->in_house_recipients ) {
 			$subscribers['in_house_recipients'] = $notification_object->in_house_recipients;
 		}
-		if ( ! empty( $notification_object->out_house_recipients ) ) {
+		if ( array() !== $notification_object->out_house_recipients ) {
 			$subscribers['out_house_recipients'] = $notification_object->out_house_recipients;
 		}
 
@@ -116,8 +121,6 @@ class Backup_Settings extends Component {
 		$settings           = new Model_Security_Tweaks();
 		$tweak_notification = new Tweak_Reminder();
 		$security_tweaks    = array(
-			'notification_repeat' => $tweak_notification->configs['reminder'],
-			'subscribers'         => $this->change_subscriber_format( $tweak_notification ),
 			'notification'        => $tweak_notification->status,
 			'data'                => $settings->data,
 			'fixed'               => $settings->fixed,
@@ -137,6 +140,7 @@ class Backup_Settings extends Component {
 			'check_known_vuln'              => $settings->check_known_vuln,
 			'scan_malware'                  => $settings->scan_malware,
 			'filesize'                      => $settings->filesize,
+			'check_abandoned_plugin'        => $settings->check_abandoned_plugin,
 			// @since 2.7.0 changes for Scheduled options.
 			'scheduled_scanning'            => $settings->scheduled_scanning,
 			'day'                           => $settings->day,
@@ -164,7 +168,7 @@ class Backup_Settings extends Component {
 			$audit_report = new Audit_Report();
 			$audit        = array(
 				'enabled'      => $settings->is_active(),
-				'report'       => $audit_report->status,
+				'report'       => 'disabled',
 				'subscribers'  => $this->change_subscriber_format( $audit_report ),
 				'frequency'    => $audit_report->frequency,
 				'day'          => $audit_report->day,
@@ -174,12 +178,10 @@ class Backup_Settings extends Component {
 				'dry_run'      => false,
 				'storage_days' => $settings->storage_days,
 			);
-			if ( ! $this->is_pro ) {
-				$audit['enabled'] = false;
-			}
 		} else {
 			$audit['enabled'] = false;
 		}
+
 		$settings_firewall    = new Model_Firewall();
 		$settings_ll          = new Model_Login_Lockout();
 		$settings_nl          = new Model_Notfound_Lockout();
@@ -262,20 +264,32 @@ class Backup_Settings extends Component {
 		if ( isset( $audit ) ) {
 			$ret['audit'] = $audit;
 		}
-		// For Blocklist_Monitor.
-		if ( $this->is_pro ) {
+		if ( $this->has_hub_api_key ) {
 			$blocklist_monitor_class             = wd_di()->get( Blocklist_Monitor::class );
 			$status                              = (string) $blocklist_monitor_class->get_status();
 			$ret['blocklist_monitor']['enabled'] = '1' === $status;
 			$ret['blocklist_monitor']['status']  = $status;
 		} else {
 			$ret['blocklist_monitor']['enabled'] = false;
+			$ret['blocklist_monitor']['status']  = '-1';
 		}
 		// For Pwned passwords.
 		$pwned_password_model                     = wd_di()->get( Model_Password_Protection::class );
 		$ret['pwned_passwords']['enabled']        = $pwned_password_model->is_active();
 		$ret['pwned_passwords']['user_roles']     = $pwned_password_model->user_roles;
 		$ret['pwned_passwords']['custom_message'] = $pwned_password_model->pwned_actions['force_change_message'];
+		// For Strong Passwords.
+		$strong_password_model                      = wd_di()->get( Strong_Password_Model::class );
+		$ret['force_strong_password']['enabled']    = $strong_password_model->is_active();
+		$ret['force_strong_password']['user_roles'] = $strong_password_model->user_roles;
+		$ret['force_strong_password']['message']    = $strong_password_model->get_message();
+		// For Session Protection.
+		$session_protection_model                     = wd_di()->get( Session_Protection_Model::class );
+		$ret['session_protection']['enabled']         = $session_protection_model->enabled;
+		$ret['session_protection']['user_roles']      = $session_protection_model->user_roles;
+		$ret['session_protection']['lock_properties'] = $session_protection_model->lock_properties;
+		$ret['session_protection']['idle_timeout']    = $session_protection_model->idle_timeout;
+		$ret['session_protection']['login_duration']  = $session_protection_model->login_duration;
 		// It's better to add Tweaks as the last key to eliminate unexpected behavior with possible user logout.
 		$ret['security_tweaks'] = $security_tweaks;
 
@@ -290,7 +304,7 @@ class Backup_Settings extends Component {
 	public function get_configs(): array {
 		$keys    = get_site_option( self::INDEXER, false );
 		$results = array();
-		if ( empty( $keys ) ) {
+		if ( ! is_array( $keys ) || array() === $keys ) {
 			return $results;
 		}
 
@@ -331,7 +345,7 @@ class Backup_Settings extends Component {
 	 */
 	public function clear_keys(): void {
 		$keys = get_site_option( self::INDEXER, array() );
-		if ( empty( $keys ) ) {
+		if ( array() === $keys ) {
 			delete_site_option( self::INDEXER );
 			delete_site_option( self::KEY );
 		}
@@ -342,7 +356,7 @@ class Backup_Settings extends Component {
 	 */
 	public function clear_configs(): void {
 		$keys = get_site_option( self::INDEXER, false );
-		if ( is_array( $keys ) && ! empty( $keys ) ) {
+		if ( is_array( $keys ) && array() !== $keys ) {
 			foreach ( $keys as $key ) {
 				delete_site_option( $key );
 			}
@@ -365,7 +379,7 @@ class Backup_Settings extends Component {
 			),
 			ARRAY_A
 		);
-		if ( ! empty( $result ) ) {
+		if ( array() !== $result ) {
 			foreach ( $result as $arr ) {
 				delete_site_option( $arr['option_name'] );
 			}
@@ -379,10 +393,11 @@ class Backup_Settings extends Component {
 	 */
 	public function maybe_create_default_config(): void {
 		$keys = get_site_option( self::INDEXER, array() );
-		if ( empty( $keys ) ) {
+		if ( array() === $keys ) {
 			$this->remove_unindexed_configs();
-			$key = 'wp_defender_config_default' . time();
-			if ( ! get_site_option( $key ) ) {
+			$key    = 'wp_defender_config_default' . time();
+			$config = get_site_option( $key );
+			if ( ! is_array( $config ) || array() === $config ) {
 				$this->create_basic_config( $key );
 			}
 		}
@@ -413,20 +428,23 @@ class Backup_Settings extends Component {
 		$default_ua_lockout_values          = ( new Model_Ua_Lockout() )->get_default_values();
 		$default_password_protection_values = ( new Model_Password_Protection() )->get_default_values();
 		$default_2fa_values                 = ( new Model_Two_Fa() )->get_default_values();
+		$default_scan_settings              = wd_di()->get( Model_Scan::class );
+
 		// Total data.
-		$data = array(
-			'scan'             => array(
+		$data          = array(
+			'scan'                  => array(
 				'integrity_check'               => true,
 				'check_core'                    => true,
 				'check_plugins'                 => true,
-				'check_known_vuln'              => true,
-				'scan_malware'                  => true,
+				'check_known_vuln'              => $default_scan_settings->check_known_vuln,
+				'scan_malware'                  => $default_scan_settings->scan_malware,
+				'check_abandoned_plugin'        => true,
 				'filesize'                      => 3,
 				'report'                        => 'enabled',
 				'always_send'                   => false,
 				'report_subscribers'            => $default_recipients,
 				'day'                           => 'sunday',
-				'day_n'                         => '1',
+				'day_n'                         => 1,
 				'time'                          => '4:00',
 				'frequency'                     => 'weekly',
 				// @since 2.7.0 We can remove it in the next version.
@@ -441,11 +459,10 @@ class Backup_Settings extends Component {
 				'email_content_issue_found'     => $default_scan_notification_values['content_issue_found'],
 				'email_content_issue_not_found' => $default_scan_notification_values['content_issue_not_found'],
 				'email_content_error'           => $default_scan_notification_values['content_error'],
-				// @since 2.7.0 move Scheduled options from Malware Scanning - Reporting to Malware settings.
 				// Values for frequency, day and time are above.
 				'scheduled_scanning'            => true,
 			),
-			'iplockout'        => array(
+			'iplockout'             => array(
 				'login_protection'                       => true,
 				'login_protection_login_attempt'         => '5',
 				'login_protection_lockout_timeframe'     => '300',
@@ -483,7 +500,7 @@ class Backup_Settings extends Component {
 				'report_subscribers'                     => $default_recipients,
 				'report_frequency'                       => 'weekly',
 				'day'                                    => 'sunday',
-				'day_n'                                  => '1',
+				'day_n'                                  => 1,
 				'report_time'                            => '4:00',
 				// @since 2.7.0 We can remove it in the next version.
 				'dry_run'                                => false,
@@ -501,7 +518,7 @@ class Backup_Settings extends Component {
 				'global_ip_list'                         => false,
 				'global_ip_list_blocklist_autosync'      => false,
 			),
-			'two_factor'       => array(
+			'two_factor'            => array(
 				// @since 2.6.5 Disabled module.
 				'enabled'             => false,
 				'lost_phone'          => true,
@@ -518,14 +535,14 @@ class Backup_Settings extends Component {
 				'email_body'          => $default_2fa_values['email_body'],
 				'app_title'           => $default_2fa_values['app_title'],
 			),
-			'mask_login'       => array(
+			'mask_login'            => array(
 				'enabled'                  => false,
 				'mask_url'                 => '',
 				'redirect_traffic'         => 'off',
 				'redirect_traffic_url'     => '',
 				'redirect_traffic_page_id' => 0,
 			),
-			'security_headers' => array(
+			'security_headers'      => array(
 				'sh_xframe'                    => true,
 				'sh_xframe_mode'               => 'sameorigin',
 				'sh_xframe_urls'               => '',
@@ -543,7 +560,7 @@ class Backup_Settings extends Component {
 				'sh_feature_policy_mode'       => 'self',
 				'sh_feature_policy_urls'       => '',
 			),
-			'settings'         => array(
+			'settings'              => array(
 				'uninstall_data'     => 'keep',
 				'uninstall_settings' => 'preserve',
 				// @since 2.7.0 Empty.
@@ -551,50 +568,60 @@ class Backup_Settings extends Component {
 				'usage_tracking'     => false,
 				'high_contrast_mode' => false,
 			),
-			'pwned_passwords'  => array(
+			'pwned_passwords'       => array(
 				'enabled'        => false,
 				'user_roles'     => $user_roles,
 				'custom_message' => $default_password_protection_values['message'],
 			),
+			'force_strong_password' => array(
+				'enabled'    => false,
+				'user_roles' => $user_roles,
+				'message'    => ( new Strong_Password_Model() )->get_message(),
+			),
+			'session_protection'    => array(
+				'enabled'         => false,
+				'idle_timeout'    => 1,
+				'login_duration'  => ( new Session_Protection_Model() )->get_default_duration(),
+				'user_roles'      => $user_roles,
+				'lock_properties' => array(),
+			),
 		);
-		// Pro properties.
-		if ( $this->is_pro ) {
-			$data['audit']             = array(
-				'enabled'      => true,
-				'report'       => 'enabled',
-				'subscribers'  => $default_recipients,
-				'frequency'    => 'weekly',
-				'day'          => 'sunday',
-				'day_n'        => '1',
-				'time'         => '4:00',
-				// @since 2.7.0 We can remove it in the next version.
-				'dry_run'      => false,
-				'storage_days' => '6 months',
-			);
+		$data['audit'] = array(
+			'enabled'      => true,
+			'report'       => 'disabled',
+			'subscribers'  => $default_recipients,
+			'frequency'    => 'weekly',
+			'day'          => 'sunday',
+			'day_n'        => 1,
+			'time'         => '4:00',
+			// @since 2.7.0 We can remove it in the next version.
+			'dry_run'      => false,
+			'storage_days' => '6 months',
+		);
+		if ( $this->has_hub_api_key ) {
 			$data['blocklist_monitor'] = array(
 				// @since 2.7.0 Enable.
 				'enabled' => true,
 				'status'  => '1',
 			);
 		} else {
-			$data['audit']['enabled']             = false;
-			$data['blocklist_monitor']['enabled'] = false;
+			$data['blocklist_monitor'] = array(
+				'enabled' => false,
+				'status'  => '-1',
+			);
 		}
 		// It's better to add Tweaks as the last key to eliminate unexpected behavior with possible user logout.
 		$data['security_tweaks'] = array(
-			'notification_repeat' => 'weekly',
-			'subscribers'         => $default_recipients,
-			'notification'        => 'enabled',
-			'automate'            => true,
-			'data'                => array(),
+			'notification' => 'disabled',
+			'data'         => array(),
 			// @since 2.7.0 Specific values for 4 fixed, 0 ignored and 8 actioned tweaks. 12 tweaks in total.
-			'fixed'               => array(
+			'fixed'        => array(
 				'disable-xml-rpc',
 				'login-duration',
 				'disable-trackback',
 				'prevent-enum-users',
 			),
-			'issues'              => array(
+			'issues'       => array(
 				'php-version',
 				'wp-version',
 				'prevent-php-executed',
@@ -604,15 +631,16 @@ class Backup_Settings extends Component {
 				'disable-file-editor',
 				'hide-error',
 			),
-			'ignore'              => array(),
+			'ignore'       => array(),
 		);
 
 		$configs['configs']      = $data;
-		$configs['strings']      = $this->create_default_module_strings( $data, $this->is_pro );
+		$configs['strings']      = $this->create_default_module_strings( $data );
 		$configs['name']         = esc_html__( 'Basic Config', 'defender-security' );
 		$configs['description']  = esc_html__( 'Recommended default protection for every site', 'defender-security' );
 		$configs['immortal']     = true;
 		$configs['is_removable'] = true;
+		$configs['version']      = 2;
 		update_site_option( $key, $configs );
 		$this->index_key( $key );
 	}
@@ -629,7 +657,7 @@ class Backup_Settings extends Component {
 			$keys[ $key ] = $key;
 			$keys         = array_unique( $keys );
 			update_site_option( self::INDEXER, $keys );
-		} elseif ( empty( $keys ) ) {
+		} elseif ( '' === $keys ) {
 			// The first config.
 			update_site_option( self::INDEXER, array( $key => $key ) );
 		}
@@ -687,7 +715,7 @@ class Backup_Settings extends Component {
 			// Return array of objects if the module is IP Lockout.
 			if ( is_object( $controller ) || is_array( $controller ) ) {
 				foreach ( $module_data as &$value ) {
-					if ( ! is_array( $value ) && ! filter_var( $value, FILTER_VALIDATE_BOOLEAN ) ) {
+					if ( isset( $value ) && ! is_array( $value ) && ! filter_var( $value, FILTER_VALIDATE_BOOLEAN ) ) {
 						$value = str_replace( '{nl}', PHP_EOL, $value );
 					}
 				}
@@ -703,7 +731,7 @@ class Backup_Settings extends Component {
 
 					$scan_notification = new Malware_Notification();
 					$scan_report       = new Malware_Report();
-					if ( ! empty( $module_data ) ) {
+					if ( array() !== $module_data ) {
 						$scan_settings = new Model_Scan();
 						// For Scan notification.
 						if ( isset( $module_data['notification'] ) ) {
@@ -716,57 +744,56 @@ class Backup_Settings extends Component {
 							if ( isset( $module_data['error_send'] ) ) {
 								$scan_notification->configs['error_send'] = $module_data['error_send'];
 							}
-							if ( ! empty( $module_data['email_subject_issue_found'] ) ) {
+							if ( isset( $module_data['email_subject_issue_found'] ) && '' !== $module_data['email_subject_issue_found'] ) {
 								$scan_notification->configs['template']['found']['subject'] = $module_data['email_subject_issue_found'];
 							}
-							if ( ! empty( $module_data['email_subject_issue_not_found'] ) ) {
+							if ( isset( $module_data['email_subject_issue_not_found'] ) && '' !== $module_data['email_subject_issue_not_found'] ) {
 								$scan_notification->configs['template']['not_found']['subject'] = $module_data['email_subject_issue_not_found'];
 							}
-							if ( ! empty( $module_data['email_subject_error'] ) ) {
+							if ( isset( $module_data['email_subject_error'] ) && '' !== $module_data['email_subject_error'] ) {
 								$scan_notification->configs['template']['error']['subject'] = $module_data['email_subject_error'];
 							}
-							if ( ! empty( $module_data['email_content_issue_found'] ) ) {
+							if ( isset( $module_data['email_content_issue_found'] ) && '' !== $module_data['email_content_issue_found'] ) {
 								$scan_notification->configs['template']['found']['body'] = $module_data['email_content_issue_found'];
 							}
-							if ( ! empty( $module_data['email_content_issue_not_found'] ) ) {
+							if ( isset( $module_data['email_content_issue_not_found'] ) && '' !== $module_data['email_content_issue_not_found'] ) {
 								$scan_notification->configs['template']['not_found']['body'] = $module_data['email_content_issue_not_found'];
 							}
-							if ( ! empty( $module_data['email_content_error'] ) ) {
+							if ( isset( $module_data['email_content_error'] ) && '' !== $module_data['email_content_error'] ) {
 								$scan_notification->configs['template']['error']['body'] = $module_data['email_content_error'];
 							}
-							if ( ! empty( $module_data['notification_subscribers'] ) ) {
+							if (
+								isset( $module_data['notification_subscribers'] )
+								&& is_array( $module_data['notification_subscribers'] )
+								&& array() !== $module_data['notification_subscribers']
+							) {
 								// Reset all recipients before.
 								$scan_notification->in_house_recipients  = array();
 								$scan_notification->out_house_recipients = array();
 								foreach ( $module_data['notification_subscribers'] as $key => $subscribers ) {
-									$scan_notification->$key = $subscribers;
+									if ( 'in_house_recipients' === $key ) {
+										$scan_notification->in_house_recipients = $subscribers;
+									} elseif ( 'out_house_recipients' === $key ) {
+										$scan_notification->out_house_recipients = $subscribers;
+									}
 								}
 							}
 							$scan_notification->save();
 						}
-						// For Scan report.
-						if (
-							$this->is_pro
-							&& isset( $module_data['report'] )
-							&& $scan_report->status !== $module_data['report']
-						) {
-							$scan_report->status = $module_data['report'];
-						}
 						if ( isset( $module_data['always_send'] ) ) {
 							$scan_report->configs['always_send'] = $module_data['always_send'];
 						}
-						if ( ! empty( $module_data['report_subscribers'] ) ) {
+						if ( isset( $module_data['report_subscribers'] ) && is_array( $module_data['report_subscribers'] ) && array() !== $module_data['report_subscribers'] ) {
 							// Reset all recipients before.
 							$scan_report->in_house_recipients  = array();
 							$scan_report->out_house_recipients = array();
 							foreach ( $module_data['report_subscribers'] as $key => $subscribers ) {
-								$scan_report->$key = $subscribers;
+								if ( 'in_house_recipients' === $key ) {
+									$scan_report->in_house_recipients = $subscribers;
+								} elseif ( 'out_house_recipients' === $key ) {
+									$scan_report->out_house_recipients = $subscribers;
+								}
 							}
-						}
-						// @since 2.7.0 Remove 'dry_run'-restoring.
-						// @since 2.7.0 scheduled values. Step#1 if 'report'-key exists.
-						if ( $this->is_pro && isset( $module_data['report'] ) ) {
-							$scan_settings->scheduled_scanning = 'enabled' === $module_data['report'];
 						}
 						// Step#2 if 'scheduled_scanning'-key exists.
 						if ( isset( $module_data['scheduled_scanning'] ) ) {
@@ -782,8 +809,8 @@ class Backup_Settings extends Component {
 							$scan_report->day   = $module_data['day'];
 						}
 						if ( isset( $module_data['day_n'] ) ) {
-							$scan_settings->day_n = $module_data['day_n'];
-							$scan_report->day_n   = $module_data['day_n'];
+							$scan_settings->day_n = (int) $module_data['day_n'];
+							$scan_report->day_n   = (int) $module_data['day_n'];
 						}
 						if ( isset( $module_data['time'] ) ) {
 							$scan_settings->time = $module_data['time'];
@@ -809,7 +836,7 @@ class Backup_Settings extends Component {
 						$lockout_controller->import_data( $module_data );
 					}
 					// For Notification and Report.
-					if ( ! empty( $module_data ) ) {
+					if ( is_array( $module_data ) && array() !== $module_data ) {
 						// Get string values for notification & report.
 						if ( isset( $module_data['notification'] ) ) {
 							$lockout_notification = new Firewall_Notification();
@@ -831,47 +858,20 @@ class Backup_Settings extends Component {
 							if ( isset( $module_data['cooldown_period'] ) ) {
 								$lockout_notification->configs['cool_off'] = $module_data['cooldown_period'];
 							}
-							if ( ! empty( $module_data['notification_subscribers'] ) ) {
+							if ( isset( $module_data['notification_subscribers'] ) && is_array( $module_data['notification_subscribers'] ) && array() !== $module_data['notification_subscribers'] ) {
 								// Reset all recipients before.
 								$lockout_notification->in_house_recipients  = array();
 								$lockout_notification->out_house_recipients = array();
 								foreach ( $module_data['notification_subscribers'] as $key => $subscribers ) {
-									$lockout_notification->$key = $subscribers;
+									if ( 'in_house_recipients' === $key ) {
+										$lockout_notification->in_house_recipients = $subscribers;
+									} elseif ( 'out_house_recipients' === $key ) {
+										$lockout_notification->out_house_recipients = $subscribers;
+									}
 								}
 							}
 
 							$lockout_notification->save();
-						}
-						if ( $this->is_pro && isset( $module_data['report'] ) ) {
-							$lockout_report = new Firewall_Report();
-							if ( $lockout_report->status !== $module_data['report'] ) {
-								$lockout_report->status = $module_data['report'];
-							}
-							if ( isset( $module_data['day'] ) ) {
-								$lockout_report->day = $module_data['day'];
-							}
-							if ( isset( $module_data['report_frequency'] ) ) {
-								$lockout_report->frequency = $module_data['report_frequency'];
-							}
-							if ( isset( $module_data['day_n'] ) ) {
-								$lockout_report->day_n = $module_data['day_n'];
-							}
-							if ( isset( $module_data['report_time'] ) ) {
-								$lockout_report->time = $module_data['report_time'];
-							}
-							if ( ! empty( $module_data['report_subscribers'] ) ) {
-								// Reset all recipients before.
-								$lockout_report->in_house_recipients  = array();
-								$lockout_report->out_house_recipients = array();
-								foreach ( $module_data['report_subscribers'] as $key => $subscribers ) {
-									$lockout_report->$key = $subscribers;
-								}
-							}
-							if ( isset( $module_data['last_sent'] ) ) {
-								$lockout_report->last_sent = $module_data['last_sent'];
-							}
-							// @since 2.7.0 Remove 'dry_run'-restoring.
-							$lockout_report->save();
 						}
 					} else {
 						// Default data for lockout notification.
@@ -893,7 +893,7 @@ class Backup_Settings extends Component {
 						// @since 2.7.0 We can remove it in the next version.
 						$lockout_report->dry_run   = false;
 						$lockout_report->frequency = 'weekly';
-						$lockout_report->day_n     = '1';
+						$lockout_report->day_n     = 1;
 						$lockout_report->day       = 'sunday';
 						$lockout_report->time      = '4:00';
 						$lockout_report->save();
@@ -903,19 +903,12 @@ class Backup_Settings extends Component {
 					$controller->import_data( $module_data );
 					// Report.
 					$audit_report = new Audit_Report();
-					if ( ! empty( $module_data ) ) {
-						if (
-							$this->is_pro
-							&& isset( $module_data['report'] )
-							&& $audit_report->status !== $module_data['report']
-						) {
-							$audit_report->status = $module_data['report'];
-						}
+					if ( is_array( $module_data ) && array() !== $module_data ) {
 						if ( isset( $module_data['frequency'] ) ) {
 							$audit_report->frequency = $module_data['frequency'];
 						}
 						if ( isset( $module_data['day_n'] ) ) {
-							$audit_report->day_n = $module_data['day_n'];
+							$audit_report->day_n = (int) $module_data['day_n'];
 						}
 						if ( isset( $module_data['day'] ) ) {
 							$audit_report->day = $module_data['day'];
@@ -923,12 +916,16 @@ class Backup_Settings extends Component {
 						if ( isset( $module_data['time'] ) ) {
 							$audit_report->time = $module_data['time'];
 						}
-						if ( ! empty( $module_data['subscribers'] ) ) {
+						if ( isset( $module_data['subscribers'] ) && is_array( $module_data['subscribers'] ) && array() !== $module_data['subscribers'] ) {
 							// Reset all recipients before.
 							$audit_report->in_house_recipients  = array();
 							$audit_report->out_house_recipients = array();
 							foreach ( $module_data['subscribers'] as $key => $subscribers ) {
-								$audit_report->$key = $subscribers;
+								if ( 'in_house_recipients' === $key ) {
+									$audit_report->in_house_recipients = $subscribers;
+								} elseif ( 'out_house_recipients' === $key ) {
+									$audit_report->out_house_recipients = $subscribers;
+								}
 							}
 						}
 						if ( isset( $module_data['last_sent'] ) ) {
@@ -941,7 +938,7 @@ class Backup_Settings extends Component {
 						// @since 2.7.0 We can remove it in the next version.
 						$audit_report->dry_run   = false;
 						$audit_report->frequency = 'weekly';
-						$audit_report->day_n     = '1';
+						$audit_report->day_n     = 1;
 						$audit_report->day       = 'sunday';
 						$audit_report->time      = '4:00';
 					}
@@ -952,15 +949,19 @@ class Backup_Settings extends Component {
 					 */
 				} elseif (
 					'blocklist_monitor' === $module
-					&& $this->is_pro
-					&& isset( $module_data['status'] )
+					&& $this->has_hub_api_key
 				) {
 					// No need to import data. Just change status.
-					( new Blocklist_Monitor() )->change_status( $module_data['status'] );
+					$blocklist_status = $module_data['status'] ?? '-1';
+					( new Blocklist_Monitor() )->change_status( $blocklist_status );
 				} elseif (
 					'pwned_passwords' === $module
 					&& isset( $module_data['custom_message'] )
 				) {
+					$controller->import_data( $module_data );
+				} elseif ( 'force_strong_password' === $module ) {
+					$controller->import_data( $module_data );
+				} elseif ( 'session_protection' === $module ) {
 					$controller->import_data( $module_data );
 				} elseif ( 'two_factor' === $module ) {
 					$controller->import_data( $module_data );
@@ -982,47 +983,10 @@ class Backup_Settings extends Component {
 						$need_reauth = $tweak_class->automate( $module_data, $request_reason );
 					}
 					// For Tweak notification.
-					if ( ! empty( $module_data ) && isset( $module_data['notification'] ) ) {
+					if ( is_array( $module_data ) && array() !== $module_data && isset( $module_data['notification'] ) ) {
 						$tweak_notification = new Tweak_Reminder();
 						if ( $tweak_notification->status !== $module_data['notification'] ) {
-							$tweak_notification->status = $module_data['notification'];
-						}
-
-						if ( isset( $module_data['notification_repeat'] ) ) {
-							// Temporary check for older versions.
-							if ( is_bool( $module_data['notification_repeat'] ) ) {
-								$tweak_notification->configs['reminder'] = $module_data['notification_repeat']
-									? 'daily'
-									: 'weekly';
-							} elseif (
-								is_string( $module_data['notification_repeat'] )
-								&& in_array(
-									$module_data['notification_repeat'],
-									array(
-										'daily',
-										'weekly',
-										'monthly',
-									),
-									true
-								)
-							) {
-								$tweak_notification->configs['reminder'] = $module_data['notification_repeat'];
-							} else {
-								$tweak_notification->configs['reminder'] = 'weekly';
-							}
-						} else {
-							$tweak_notification->configs['reminder'] = 'weekly';
-						}
-						if ( ! empty( $module_data['subscribers'] ) ) {
-							// Reset all recipients before.
-							$tweak_notification->in_house_recipients  = array();
-							$tweak_notification->out_house_recipients = array();
-							foreach ( $module_data['subscribers'] as $key => $subscribers ) {
-								$tweak_notification->$key = $subscribers;
-							}
-						}
-						if ( isset( $module_data['last_sent'] ) ) {
-							$tweak_notification->last_sent = $module_data['last_sent'];
+								$tweak_notification->status = 'disabled';
 						}
 						$tweak_notification->save();
 					}
@@ -1043,7 +1007,7 @@ class Backup_Settings extends Component {
 	 * @return array Returns an array containing parsed data for import.
 	 */
 	public function parse_data_for_import( $configs = null ): array {
-		if ( empty( $configs ) ) {
+		if ( ! is_array( $configs ) || array() === $configs ) {
 			$configs = $this->gather_data();
 		}
 		$strings = array();
@@ -1110,6 +1074,10 @@ class Backup_Settings extends Component {
 				return new Blocklist_Monitor();
 			case 'pwned_passwords':
 				return new Controller_Password_Protection();
+			case 'force_strong_password':
+				return new Strong_Password_Controller();
+			case 'session_protection':
+				return new Session_Protection_Controller();
 			default:
 				return '';
 		}
@@ -1123,7 +1091,8 @@ class Backup_Settings extends Component {
 	 * @return bool Returns true if the new structure is used, otherwise false.
 	 */
 	public function check_for_new_structure( array $configs ): bool {
-		return array_key_exists( 'subscribers', $configs['security_tweaks'] );
+		return isset( $configs['version'] ) ||
+			( isset( $configs['security_tweaks'] ) && array_key_exists( 'enabled_user_enums', $configs['security_tweaks'] ) );
 	}
 
 	/**
@@ -1134,8 +1103,9 @@ class Backup_Settings extends Component {
 	 * @return bool Returns true if the data is valid, otherwise false.
 	 */
 	public function verify_config_data( $data ): bool {
-		if ( ! isset( $data['name'], $data['configs'], $data['strings'] )
-			|| empty( $data['name'] ) || empty( $data['strings'] )
+		if (
+			! isset( $data['name'], $data['configs'], $data['strings'] )
+			|| '' === $data['name'] || ! is_array( $data['strings'] ) || array() === $data['strings']
 		) {
 			return false;
 		}
@@ -1151,48 +1121,39 @@ class Backup_Settings extends Component {
 	 * @return array Returns an array of imported module strings.
 	 */
 	public function import_module_strings( array $data ): array {
-		if ( empty( $data['strings'] ) ) {
+		if ( ! isset( $data['strings'] ) || ! is_array( $data['strings'] ) || array() === $data['strings'] ) {
 			return array();
 		}
 
 		foreach ( $data['configs'] as $key => $config ) {
-			if (
-				'security_tweaks' === $key
-				&& 'enabled' === $config['notification']
-				&& 1 === ( is_array( $data['strings']['security_tweaks'] )
-							|| $data['strings']['security_tweaks'] instanceof Countable ? count( $data['strings']['security_tweaks'] ) : 0 )
-			) {
-				$data['strings']['security_tweaks'][] = esc_html__( 'Email notifications active', 'defender-security' );
+			if ( 'security_tweaks' === $key ) {
+				$data['strings']['security_tweaks'] = wd_di()->get( Controller_Security_Tweaks::class )->config_strings( $config );
 			} elseif ( 'scan' === $key ) {
-				$data['strings']['scan'] = wd_di()->get( Controller_Scan::class )->config_strings(
-					$config,
-					$this->is_pro
-				);
+				$data['strings']['scan'] = wd_di()->get( Controller_Scan::class )->config_strings( $config );
 			} elseif ( 'iplockout' === $key ) {
-				$data['strings']['iplockout'] = wd_di()->get( Controller_Firewall::class )->config_strings(
-					$config,
-					$this->is_pro
-				);
+				$data['strings']['iplockout'] = wd_di()->get( Controller_Firewall::class )->config_strings( $config );
 			} elseif ( 'audit' === $key ) {
 				// Additional check for Free version.
 				$config                   = is_array( $config ) ? $config : array();
-				$data['strings']['audit'] = wd_di()->get( Audit_Logging::class )->config_strings(
-					$config,
-					$this->is_pro
-				);
+				$data['strings']['audit'] = wd_di()->get( Audit_Logging::class )->config_strings( $config );
 			} elseif ( 'blocklist_monitor' === $key ) {
 				// Additional check for Free version.
 				$config                               = is_array( $config ) ? $config : array();
-				$data['strings']['blocklist_monitor'] = $this->format_blocklist_monitor_strings(
-					$config,
-					$this->is_pro
-				);
+				$data['strings']['blocklist_monitor'] = $this->format_blocklist_monitor_strings( $config );
 			} elseif ( 'pwned_passwords' === $key ) {
-				$data['strings']['pwned_passwords'] = wd_di()->get( Controller_Password_Protection::class )->config_strings(
-					$config,
-					$this->is_pro
-				);
+				$data['strings']['pwned_passwords'] = wd_di()->get( Controller_Password_Protection::class )->config_strings( $config );
+			} elseif ( 'mask_login' === $key ) {
+				$data['strings']['mask_login'] = wd_di()->get( Controller_Mask_Login::class )->config_strings( $config );
+			} elseif ( 'security_headers' === $key ) {
+				$config                              = is_array( $config ) ? $config : array();
+				$data['strings']['security_headers'] = wd_di()->get( Security_Headers::class )->config_strings( $config );
+			} elseif ( 'two_factor' === $key ) {
+				// Two-Factor is available on both Free and Pro.
+				$data['strings']['two_factor'] = wd_di()->get( Two_Factor::class )->config_strings( $config );
+			} elseif ( 'force_strong_password' === $key ) {
+				$data['strings']['force_strong_password'] = wd_di()->get( Strong_Password_Controller::class )->config_strings( $config );
 			}
+			// todo: display session_protection strings.
 		}
 
 		return $data['strings'];
@@ -1201,39 +1162,36 @@ class Backup_Settings extends Component {
 	/**
 	 * Creates default module strings for the Basic configuration.
 	 *
-	 * @param  array $configs  The configuration data.
-	 * @param  bool  $is_pro  Whether the current installation is a pro version.
+	 * @param  array $configs The configuration data.
 	 *
 	 * @return array Returns an array of default module strings.
 	 */
-	public function create_default_module_strings( array $configs, bool $is_pro ): array {
+	public function create_default_module_strings( array $configs ): array {
 		$strings = array();
+
 		foreach ( $configs as $key => $config ) {
 			if ( 'security_tweaks' === $key ) {
-				$strings['security_tweaks'] = wd_di()->get( Controller_Security_Tweaks::class )->config_strings(
-					$config,
-					$is_pro
-				);
+				$strings['security_tweaks'] = wd_di()->get( Controller_Security_Tweaks::class )->config_strings( $config );
 			} elseif ( 'scan' === $key ) {
-				$strings['scan'] = wd_di()->get( Controller_Scan::class )->config_strings( $config, $is_pro );
+				$strings['scan'] = wd_di()->get( Controller_Scan::class )->config_strings( $config );
 			} elseif ( 'iplockout' === $key ) {
-				$strings['iplockout'] = wd_di()->get( Controller_Firewall::class )->config_strings( $config, $is_pro );
+				$strings['iplockout'] = wd_di()->get( Controller_Firewall::class )->config_strings( $config );
 			} elseif ( 'audit' === $key ) {
-				$strings['audit'] = wd_di()->get( Audit_Logging::class )->config_strings( $config, $is_pro );
+				$strings['audit'] = wd_di()->get( Audit_Logging::class )->config_strings( $config );
 			} elseif ( 'two_factor' === $key ) {
 				$strings['two_factor'][] = esc_html__( 'Inactive', 'defender-security' );
 			} elseif ( 'mask_login' === $key ) {
-				$strings['mask_login'][] = esc_html__( 'Inactive', 'defender-security' );
+				$strings['mask_login'] = wd_di()->get( Controller_Mask_Login::class )->config_strings( $config );
 			} elseif ( 'security_headers' === $key ) {
-				$strings['security_headers'][] = esc_html__( 'Active', 'defender-security' );
+				$strings['security_headers'] = wd_di()->get( Security_Headers::class )->config_strings( $config );
 			} elseif ( 'blocklist_monitor' === $key ) {
-				$strings['blocklist_monitor'] = wd_di()->get( Blocklist_Monitor::class )->config_strings(
-					$config,
-					$is_pro
-				);
+				$strings['blocklist_monitor'] = wd_di()->get( Blocklist_Monitor::class )->config_strings( $config );
 			} elseif ( 'pwned_passwords' === $key ) {
 				$strings['pwned_passwords'][] = esc_html__( 'Inactive', 'defender-security' );
+			} elseif ( 'force_strong_password' === $key ) {
+				$strings['force_strong_password'][] = esc_html__( 'Inactive', 'defender-security' );
 			}
+			// todo: display session_protection strings.
 		}
 
 		return $strings;
@@ -1248,7 +1206,7 @@ class Backup_Settings extends Component {
 	 */
 	private function get_decoded_settings( string $key ): array {
 		$data = get_site_option( $key );
-		if ( $data && is_string( $data ) ) {
+		if ( is_string( $data ) && '' !== trim( $data ) ) {
 			$decoded_data = json_decode( $data, true );
 			if ( is_array( $decoded_data ) ) {
 				return $decoded_data;
@@ -1265,7 +1223,7 @@ class Backup_Settings extends Component {
 	 */
 	private function get_prev_settings(): array {
 		$arr = array();
-		if ( $this->is_pro ) {
+		if ( $this->has_hub_api_key ) {
 			$status         = (string) wd_di()->get( Blocklist_Monitor::class )->get_status();
 			$arr['enabled'] = '1' === $status;
 			$arr['status']  = $status;
@@ -1298,9 +1256,9 @@ class Backup_Settings extends Component {
 	private function module_to_name( string $module ): string {
 		switch ( $module ) {
 			case 'security_tweaks':
-				return esc_html__( 'Security Recommendations', 'defender-security' );
+				return esc_html__( 'Hardening', 'defender-security' );
 			case 'scan':
-				return esc_html__( 'Malware Scanning', 'defender-security' );
+				return esc_html__( 'Issue', 'defender-security' );
 			case 'audit':
 				return Model_Audit_Logging::get_module_name();
 			case 'iplockout':
@@ -1428,37 +1386,19 @@ class Backup_Settings extends Component {
 	}
 
 	/**
-	 * Format strings of Block list Monitor config.
+	 * Format strings of Blocklist Monitor config.
 	 *
 	 * @param  array $config  Saved config.
-	 * @param  bool  $is_pro  User membership status.
 	 *
 	 * @return array
 	 */
-	private function format_blocklist_monitor_strings( array $config, bool $is_pro ): array {
-		// If Block list Monitor is enable.
-		if ( isset( $config['status'] ) && '1' === (string) $config['status'] ) {
-			if ( $is_pro ) {
-				$monitor = array( esc_html__( 'Active', 'defender-security' ) );
-			} else {
-				$monitor = array(
-					sprintf(
-					/* translators: %s: Html for Pro-tag. */
-						esc_html__( 'Active %s', 'defender-security' ),
-						'<span class="sui-tag sui-tag-pro">Pro</span>'
-					),
-				);
-			}
-		} elseif ( $is_pro ) {
-			$monitor = array( esc_html__( 'Inactive', 'defender-security' ) );
+	private function format_blocklist_monitor_strings( array $config ): array {
+		if ( $this->has_hub_api_key ) {
+			$monitor = isset( $config['status'] ) && '1' === (string) $config['status']
+				? array( esc_html__( 'Blocklist Monitor active', 'defender-security' ) )
+				: array( esc_html__( 'Blocklist Monitor inactive', 'defender-security' ) );
 		} else {
-			$monitor = array(
-				sprintf(
-				/* translators: %s: Html for Pro-tag. */
-					esc_html__( 'Inactive %s', 'defender-security' ),
-					'<span class="sui-tag sui-tag-pro">Pro</span>'
-				),
-			);
+			$monitor = array( esc_html__( 'Blocklist Monitor inactive', 'defender-security' ) );
 		}
 
 		return $monitor;

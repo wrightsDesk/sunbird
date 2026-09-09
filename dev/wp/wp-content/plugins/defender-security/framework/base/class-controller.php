@@ -90,7 +90,6 @@ class Controller extends Component {
 			return false;
 		}
 		if ( Hub_Connector::should_render() ) {
-			wp_dequeue_script( 'def-iplockout' );
 			// Custimize the text.
 			add_filter(
 				'wpmudev_hub_connector_localize_text_vars',
@@ -117,7 +116,7 @@ class Controller extends Component {
 			$content = $view->render( $view_file, $params );
 		}
 
-		if ( ! empty( $this->layout ) ) {
+		if ( null !== $this->layout && '' !== $this->layout ) {
 			$template = new View( $base_path . 'view' . DIRECTORY_SEPARATOR . 'layouts' );
 			$content  = $template->render(
 				$this->layout,

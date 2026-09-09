@@ -43,7 +43,7 @@ if ( ! class_exists( DynamicField::class ) ) :
 					'methods'             => 'GET',
 					'callback'            => [ $this, 'get_dynamic_field' ],
 					'permission_callback' => function () {
-						return current_user_can( 'edit_posts' );
+						return current_user_can( 'edit_others_posts' );
 					},
 				)
 			);
@@ -67,19 +67,27 @@ if ( ! class_exists( DynamicField::class ) ) :
 				setup_postdata( $post );
 			}
 
+			$context    = $request->get_param( 'context' ) ?? [];
 			$attributes = $request->get_param( 'attributes' );
 
 			$attributes['fetchRawValue'] = true;
 
+			$kind = $request->get_param( 'kind' );
+			if ( 'taxonomy' === $kind && empty( $attributes['metaType'] ) ) {
+				$attributes['metaType'] = 'term';
+			}
+
 			// Create an array representation simulating the output of parse_blocks.
-			$block = array(
+			$parsed_block = array(
 				'blockName'    => 'mfb/meta-field-block',
 				'attrs'        => $attributes,
 				'innerHTML'    => '',
 				'innerContent' => array(),
 			);
 
-			return render_block( $block );
+			$block = new \WP_Block( $parsed_block, $context );
+
+			return $block->render();
 		}
 
 		/**

@@ -8,18 +8,16 @@
 namespace WP_Defender\Traits;
 
 use WP_Error;
-use DateTime;
 use Exception;
 use WP_User_Query;
 use WPMUDEV_Dashboard;
 use WP_Defender\Model\Scan;
-use WP_Defender\Model\Audit_Log;
+use WPMUDEV\Hub\Connector\Data;
 use WP_Defender\Model\Notification;
 use WP_Defender\Controller\Firewall;
-use WP_Defender\Component\Quarantine;
 use WP_Defender\Model\Setting\Two_Fa;
 use WP_Defender\Component\IP\Antibot_Global_Firewall;
-use WP_Defender\Model\Setting\Recaptcha;
+use WP_Defender\Model\Setting\Captcha;
 use WP_Defender\Model\Setting\Mask_Login;
 use WP_Defender\Controller\Security_Tweaks;
 use WP_Defender\Controller\Security_Headers;
@@ -66,23 +64,14 @@ trait Defender_Hub_Client {
 				return $base . 'api/defender/v1/vulnerabilities';
 			case self::API_SCAN_SIGNATURE:
 				return $base . 'api/defender/v1/yara-signatures';
-			case self::API_AUDIT:
-				// This is from another endpoint.
-				$base = defined( 'WPMUDEV_CUSTOM_AUDIT_SERVER' )
-					? constant( 'WPMUDEV_CUSTOM_AUDIT_SERVER' )
-					: 'https://audit.wpmudev.org/';
-
-				return $base . 'logs';
-			case self::API_AUDIT_ADD:
-				$base = defined( 'WPMUDEV_CUSTOM_AUDIT_SERVER' )
-					? constant( 'WPMUDEV_CUSTOM_AUDIT_SERVER' )
-					: 'https://audit.wpmudev.org/';
-
-				return $base . 'logs/add_multiple';
 			case self::API_BLACKLIST:
 				return $base . 'api/defender/v1/blacklist-monitoring?domain=' . network_site_url();
 			case self::API_GLOBAL_IP_LIST:
 				return $base . 'api/hub/v1/global-ip-list';
+			case self::API_GLOBAL_IP_LIST_HOSTING:
+				$site_id = $this->get_site_id();
+
+				return $base . "api/hub/v1/sites/$site_id/modules/hosting/global-ip-list";
 			case self::API_PACKAGE_CONFIGS:
 				return $base . 'api/hub/v1/package-configs';
 			case self::API_IP_BLOCKLIST_SUBMIT_LOGS:
@@ -103,8 +92,16 @@ trait Defender_Hub_Client {
 	 * @return int|bool
 	 */
 	public function get_site_id() {
-		if ( false !== $this->get_apikey() ) {
+		if ( 'dashboard' === $this->resolve_connection_mode() ) {
 			return (int) WPMUDEV_Dashboard::$api->get_site_id();
+		}
+
+		// Ignore stale HCM site IDs after disconnect.
+		if ( self::get_hcm_status() && class_exists( 'WPMUDEV\Hub\Connector\Data' ) ) {
+			$site_id = Data::get()->hub_site_id();
+			if ( $site_id > 0 ) {
+				return $site_id;
+			}
 		}
 
 		return false;
@@ -127,7 +124,27 @@ trait Defender_Hub_Client {
 		array $args = array(),
 		bool $recheck = false
 	) {
-		$api_key          = $this->get_api_key();
+		$api_key = $this->get_api_key();
+		if ( '' === $api_key ) {
+			$link_text = sprintf(
+				'<a target="_blank" href="%s">%s</a>',
+				'https://wpmudev.com/project/wpmu-dev-dashboard/',
+				esc_html__( 'here', 'defender-security' )
+			);
+
+			return new WP_Error(
+				'dashboard_required',
+				sprintf(
+				/* translators: %s - wpmudev link */
+					esc_html__(
+						'WPMU DEV Dashboard will be required for this action. Please visit %s and install the WPMU DEV Dashboard.',
+						'defender-security'
+					),
+					$link_text
+				)
+			);
+		}
+
 		$body['domain'] ??= network_site_url();
 
 		$headers = array(
@@ -161,13 +178,16 @@ trait Defender_Hub_Client {
 			}
 		}
 
-		$result = wp_remote_retrieve_body( $request );
-		$result = json_decode( $result, true );
+		$response_code = wp_remote_retrieve_response_code( $request );
+		$result        = wp_remote_retrieve_body( $request );
+		$result        = json_decode( $result, true );
 
-		if ( 200 !== wp_remote_retrieve_response_code( $request ) ) {
+		if ( $response_code < 200 || $response_code >= 300 ) {
 			return new WP_Error(
-				wp_remote_retrieve_response_code( $request ),
-				$result['message'] ?? wp_remote_retrieve_response_message( $request )
+				$response_code,
+				isset( $result['message'] )
+					? $result['message']
+					: wp_remote_retrieve_response_message( $request )
 			);
 		}
 
@@ -190,28 +210,7 @@ trait Defender_Hub_Client {
 		array $args = array(),
 		bool $recheck = false
 	) {
-		$api_key = $this->get_api_key();
-
-		if ( empty( $api_key ) ) {
-			$link_text = sprintf(
-				'<a target="_blank" href="%s">%s</a>',
-				'https://wpmudev.com/project/wpmu-dev-dashboard/',
-				esc_html__( 'here', 'defender-security' )
-			);
-
-			return new WP_Error(
-				'dashboard_required',
-				sprintf(
-				/* translators: %s - wpmudev link */
-					esc_html__(
-						'WPMU DEV Dashboard will be required for this action. Please visit %s and install the WPMU DEV Dashboard.',
-						'defender-security'
-					),
-					$link_text
-				)
-			);
-		}
-
+		// Checking the validity of API key inside the method.
 		return $this->hub_api_request( $scenario, $body, $args, $recheck );
 	}
 
@@ -249,7 +248,7 @@ trait Defender_Hub_Client {
 	 * @throws Exception If the WPMU DEV Dashboard plugin is missing.
 	 */
 	public function can_wpmu_free_request() {
-		return in_array( $this->get_membership_type(), array( 'free', 'full' ), true );
+		return in_array( $this->get_membership_type(), array( 'free', 'full', 'unit' ), true );
 	}
 
 	/**
@@ -265,6 +264,8 @@ trait Defender_Hub_Client {
 			'plugin_integrity'   => 0,
 			'vulnerability_db'   => 0,
 			'file_suspicious'    => 0,
+			'outdated_plugin'    => 0,
+			'closed_plugin'      => 0,
 			'last_completed'     => false,
 			'scan_items'         => array(),
 			'num_issues'         => 0,
@@ -278,10 +279,12 @@ trait Defender_Hub_Client {
 			$scan_result['plugin_integrity']   = $data['count_plugin'];
 			$scan_result['vulnerability_db']   = $data['count_vuln'];
 			$scan_result['file_suspicious']    = $data['count_malware'];
+			$scan_result['outdated_plugin']    = $data['count_outdated_plugin'];
+			$scan_result['closed_plugin']      = $data['count_closed_plugin'];
 			$scan_result['last_completed']     = $scan->date_end;
 			$scan_result['num_ignored_issues'] = $data['count_ignored'];
 
-			if ( ! empty( $data['issues'] ) ) {
+			if ( isset( $data['issues'] ) && is_array( $data['issues'] ) && array() !== $data['issues'] ) {
 				$total_issues = $data['count_issues'];
 				foreach ( $data['issues'] as $issue ) {
 					$scan_result['scan_items'][] = array(
@@ -301,7 +304,7 @@ trait Defender_Hub_Client {
 			'scan_result'   => $scan_result,
 			'scan_schedule' => array(
 				// @since 2.7.0 change scheduled scan logic.
-				'is_activated' => $settings->scheduled_scanning,
+				'is_activated' => $settings->is_enabled_scheduled_scanning(),
 				// Example of frequency, day, time in build_notification_hub_data() method.
 				'time'         => $settings->time,
 				'day'          => $this->get_notification_day( $settings ),
@@ -369,31 +372,15 @@ trait Defender_Hub_Client {
 
 	/**
 	 * Builds an array of audit data to be sent to the hub.
+	 * Audit log is Pro-only; returns empty stub by default.
 	 *
-	 * @return array An array containing the number of audit log entries, the timestamp of the
-	 *               last audit log entry, and a boolean indicating if audit logging is enabled.
+	 * @return array
 	 */
 	public function build_audit_hub_data(): array {
-		$date_from   = ( new DateTime( wp_date( 'Y-m-d', strtotime( '-30 days' ) ) ) )->setTime(
-			0,
-			0,
-			0
-		)->getTimestamp();
-		$date_to     = ( new DateTime( wp_date( 'Y-m-d' ) ) )->setTime( 23, 59, 59 )->getTimestamp();
-		$month_count = Audit_Log::count( $date_from, $date_to );
-		$last        = Audit_Log::get_last();
-		if ( is_object( $last ) ) {
-			$last = wp_date( 'Y-m-d g:i a', $last->timestamp );
-		} else {
-			$last = 'n/a';
-		}
-
-		$settings = new Audit_Logging();
-
 		return array(
-			'month'      => $month_count,
-			'last_event' => $last,
-			'enabled'    => $settings->is_active(),
+			'month'      => 0,
+			'last_event' => 'n/a',
+			'enabled'    => false,
 		);
 	}
 
@@ -451,7 +438,7 @@ trait Defender_Hub_Client {
 		}
 
 		return array(
-			'active'       => $settings->enabled && count( $settings->user_roles ),
+			'active'       => $settings->enabled && array() !== $settings->user_roles,
 			'enabled'      => $settings->enabled,
 			'active_users' => $active_users,
 		);
@@ -472,12 +459,12 @@ trait Defender_Hub_Client {
 	}
 
 	/**
-	 * Builds an array of security headers data to be sent to the hub.
+	 * Builds an array of Captcha data to be sent to the hub.
 	 *
 	 * @return array
 	 */
-	public function build_recaptcha_hub_data(): array {
-		$settings = new Recaptcha();
+	public function build_captcha_hub_data(): array {
+		$settings = new Captcha();
 
 		return array(
 			'active' => $settings->is_active(),
@@ -505,7 +492,7 @@ trait Defender_Hub_Client {
 	 * @return string
 	 */
 	private function get_notification_day( $module_report ): string {
-		if ( ! is_object( $module_report ) ) {
+		if ( ! ( isset( $module_report->frequency ) && isset( $module_report->day ) && isset( $module_report->day_n ) ) ) {
 			return '';
 		}
 
@@ -577,24 +564,7 @@ trait Defender_Hub_Client {
 	 * @return array
 	 */
 	public function build_firewall_notification_hub_data(): array {
-		$firewall_notification = new Firewall_Notification();
-		if ( 'enabled' === $firewall_notification->status ) {
-			$login_lockout = $firewall_notification->configs['login_lockout'];
-			$nf_lockout    = $firewall_notification->configs['nf_lockout'];
-			$ua_lockout    = $firewall_notification->configs['ua_lockout'] ?? false;
-		} else {
-			$login_lockout = false;
-			$nf_lockout    = false;
-			$ua_lockout    = false;
-		}
-
-		return array(
-			'firewall' => array(
-				'login_lockout' => $login_lockout,
-				'404_lockout'   => $nf_lockout,
-				'ua_lockout'    => $ua_lockout,
-			),
-		);
+		return array( 'firewall' => ( new Firewall_Notification() )->get_hub_data() );
 	}
 
 	/**
@@ -624,7 +594,7 @@ trait Defender_Hub_Client {
 		$two_fa            = $this->build_2fa_hub_data();
 		$mask_login        = $this->build_mask_login_hub_data();
 		$sec_headers       = $this->build_security_headers_hub_data();
-		$recaptcha         = $this->build_recaptcha_hub_data();
+		$captcha           = $this->build_captcha_hub_data();
 		$pwned_password    = $this->build_password_protection_hub_data();
 		$quarantined_files = $this->build_quarantined_files_hub_data();
 
@@ -693,15 +663,16 @@ trait Defender_Hub_Client {
 							'active'   => $sec_headers['active'],
 							'inactive' => $sec_headers['inactive'],
 						),
+						// We'll change 'google_recaptcha'-key to 'captcha' in the future.
 						'google_recaptcha'    => array(
-							'active' => $recaptcha['active'],
+							'active' => $captcha['active'],
 						),
 						'password_protection' => array(
 							'active' => $pwned_password['active'],
 						),
 					),
 					'reports'                => $this->build_notification_hub_data(),
-					'notifications'          => $this->build_firewall_notification_hub_data(),
+					'notifications'          => array( 'firewall' => ( new Firewall_Notification() )->get_hub_data() ),
 					'quarantined_files'      => $quarantined_files,
 				)
 			),
@@ -714,7 +685,7 @@ trait Defender_Hub_Client {
 	 * @return bool
 	 */
 	public function is_wpmu_hosting(): bool {
-		return ! empty( $_SERVER['WPMUDEV_HOSTED'] );
+		return isset( $_SERVER['WPMUDEV_HOSTED'] );
 	}
 
 	/**
@@ -759,7 +730,7 @@ trait Defender_Hub_Client {
 			return array();
 		}
 
-		return wd_di()->get( Quarantine::class )->hub_list();
+		return wd_di()->get( \WP_Defender\Component\Quarantine::class )->hub_list();
 	}
 
 	/**

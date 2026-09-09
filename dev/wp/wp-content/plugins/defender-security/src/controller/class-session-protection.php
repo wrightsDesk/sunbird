@@ -13,7 +13,6 @@ use Calotes\Component\Request;
 use Calotes\Component\Response;
 use WP_Defender\Component\Session_Protection as Service;
 use WP_Defender\Model\Setting\Session_Protection as Settings;
-use WP_Defender\Component\Breadcrumbs;
 
 /**
  * Handle session protection module.
@@ -41,7 +40,6 @@ class Session_Protection extends Event {
 	public function __construct() {
 		$this->model   = wd_di()->get( Settings::class );
 		$this->service = wd_di()->get( Service::class );
-		add_filter( 'wp_defender_advanced_tools_data', array( $this, 'script_data' ) );
 		$this->register_routes();
 		if ( $this->model->enabled ) {
 			add_action( 'init', array( $this->service, 'handle_session_timeout' ) );
@@ -62,32 +60,16 @@ class Session_Protection extends Event {
 	}
 
 	/**
-	 * Provide data to the frontend via localized script.
-	 *
-	 * @param array $data Data collection is ready to passed.
-	 *
-	 * @return array Modified data array with added this controller data.
-	 */
-	public function script_data( array $data ): array {
-		$data['session_protection'] = $this->data_frontend();
-
-		return $data;
-	}
-
-	/**
 	 * All the variables that we will show on frontend, both in the main page, or dashboard widget.
 	 *
 	 * @return array
 	 */
 	public function data_frontend(): array {
-		$is_visited = wd_di()->get( Breadcrumbs::class )->get_meta_key();
-
 		return array_merge(
 			array(
-				'model'            => $this->model->export(),
-				'properties'       => $this->service::session_lock_properties(),
-				'show_feature_dot' => wd_di()->get( \WP_Defender\Behavior\WPMUDEV::class )->is_pro() && ! $is_visited,
-				'roles'            => $this->get_all_editable_roles(),
+				'model'      => $this->model->export(),
+				'properties' => $this->service::session_lock_properties(),
+				'roles'      => $this->get_all_editable_roles(),
 			),
 			$this->dump_routes_and_nonces()
 		);
@@ -111,10 +93,10 @@ class Session_Protection extends Event {
 			\WP_Defender\Component\Config\Config_Hub_Helper::set_clear_active_flag();
 
 			// Maybe track if any settings have changed except user roles.
-			if ( $this->maybe_track() && ! empty( $prev_data ) &&
+			if ( $this->maybe_track() && array() !== $prev_data &&
 				(
 					( $this->model->enabled !== $prev_data['enabled'] )
-					|| ! empty( array_diff( $this->model->lock_properties, $prev_data['lock_properties'] ) )
+					|| array() !== array_diff( $this->model->lock_properties, $prev_data['lock_properties'] )
 					|| $this->model->idle_timeout !== $prev_data['idle_timeout']
 				)
 			) {
@@ -165,16 +147,17 @@ class Session_Protection extends Event {
 	 * Import the data of other source into this, it can be when HUB trigger the import, or user apply a preset.
 	 *
 	 * @param array $data Data from other source.
-	 *
-	 * @return null|void
 	 */
 	public function import_data( array $data ) {
+		$this->model->import( $data );
+		if ( $this->model->validate() ) {
+			$this->model->save();
+			$this->service->update_last_activity();
+		}
 	}
 
 	/**
 	 * Remove all settings, configs generated in this container runtime.
-	 *
-	 * @return mixed
 	 */
 	public function remove_settings() {
 	}
@@ -183,7 +166,6 @@ class Session_Protection extends Event {
 	 * Remove all data.
 	 */
 	public function remove_data() {
-		wd_di()->get( Breadcrumbs::class )->delete_meta_key();
 		delete_site_transient( Service::LOGOUT_MSG_TRANSIENT_KEY );
 	}
 
@@ -193,15 +175,8 @@ class Session_Protection extends Event {
 	 * @return array
 	 */
 	public function export_strings() {
-		return array();
-	}
-
-	/**
-	 * Provides data for the dashboard widget.
-	 *
-	 * @return array An array of dashboard widget data.
-	 */
-	public function dashboard_widget(): array {
-		return array( 'model' => $this->model->export() );
+		return array(
+			$this->model->is_active() ? esc_html__( 'Active', 'defender-security' ) : esc_html__( 'Inactive', 'defender-security' ),
+		);
 	}
 }

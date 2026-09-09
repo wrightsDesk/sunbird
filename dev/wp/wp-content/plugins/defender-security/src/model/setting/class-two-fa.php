@@ -198,6 +198,9 @@ To complete your login, copy and paste the temporary password into the Password 
 			require_once ABSPATH . '/wp-admin/includes/user.php';
 		}
 		$this->user_roles = array_keys( get_editable_roles() );
+		if ( is_multisite() ) {
+			$this->user_roles[] = 'super_admin';
+		}
 		// Define some other defaults.
 		$this->custom_graphic_type = $default_values['custom_graphic_type'];
 		$this->custom_graphic_url  = $default_values['custom_graphic_url'];
@@ -205,7 +208,7 @@ To complete your login, copy and paste the temporary password into the Password 
 		$this->email_subject       = $default_values['email_subject'];
 		$this->email_sender        = $default_values['email_sender'];
 		$this->email_body          = $default_values['email_body'];
-		$this->app_title           = empty( $default_values['app_title'] )
+		$this->app_title           = '' === $default_values['app_title']
 			? wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES )
 			: $default_values['app_title'];
 		$this->force_auth_mess     = $default_values['message'];
@@ -221,7 +224,9 @@ To complete your login, copy and paste the temporary password into the Password 
 	 * @return void
 	 */
 	protected function after_load(): void {
-		$this->user_roles = array_values( $this->user_roles );
+		$this->user_roles       = array_values( $this->user_roles );
+		$this->force_auth_roles = array_values( array_intersect( $this->force_auth_roles, $this->user_roles ) );
+		$this->force_auth       = array() !== $this->force_auth_roles;
 	}
 
 	/**
@@ -229,7 +234,7 @@ To complete your login, copy and paste the temporary password into the Password 
 	 *
 	 * @param  string $plugin  The plugin to check for conflict.
 	 *
-	 * @return int Returns 0 if the plugin is not in conflict, 1 if it is in conflict, and 0 if it is not in conflict
+	 * @return int|bool Returns 0 if the plugin is not in conflict, true if it is in conflict, and false if it is not in conflict
 	 *     but has been marked as not conflicting.
 	 */
 	public function is_conflict( $plugin ) {
@@ -307,7 +312,9 @@ To complete your login, copy and paste the temporary password into the Password 
 	 * @since 3.12.0
 	 */
 	public function is_active(): bool {
-		return (bool) apply_filters( 'wd_2fa_enable', $this->enabled );
+		$enable = apply_filters( 'wd_2fa_enable', $this->enabled );
+
+		return is_bool( $enable ) ? $enable : (bool) $enable;
 	}
 
 	/**

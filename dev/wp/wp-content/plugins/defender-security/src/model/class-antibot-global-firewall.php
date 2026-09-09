@@ -110,7 +110,7 @@ class Antibot_Global_Firewall extends DB {
 	 * @return int|false The number of rows affected, or false on error.
 	 */
 	public function unlock_ips( array $ips ) {
-		if ( empty( $ips ) ) {
+		if ( array() === $ips ) {
 			return false;
 		}
 
@@ -126,6 +126,21 @@ class Antibot_Global_Firewall extends DB {
 				array_merge( array( $current_time ), $ips )
 			)
 		);
+	}
+
+	/**
+	 * Check if the blocklist table has any records.
+	 *
+	 * @return bool
+	 */
+	public function has_records(): bool {
+		global $wpdb;
+
+		$table_name = $wpdb->prefix . $this->table;
+
+		$count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM $table_name LIMIT 1" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+
+		return $count > 0;
 	}
 
 	/**
